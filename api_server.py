@@ -16,6 +16,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
@@ -573,6 +574,12 @@ class UnlockBody(BaseModel):
     admin_key: str = Field(max_length=200)
 
 
+class SimulatePurchaseBody(BaseModel):
+    guide_id: str = Field(max_length=100)
+    user_email: str = Field(max_length=254)
+    admin_key: str = Field(max_length=200)
+
+
 class CheckoutBody(BaseModel):
     guide_id: str = Field(max_length=100)
 
@@ -995,6 +1002,58 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
         )
         db.commit()
     return {"received": True}
+
+
+@app.post("/api/admin/simulate-purchase")
+def simulate_purchase(body: SimulatePurchaseBody):
+    """TEMPORARY go-live test helper — admin-key gated, no Stripe or checkout
+    involvement at all. Mirrors exactly what the real Stripe webhook does on a
+    successful payment (grant the guide + send both receipt and accounting
+    emails) so the email pipeline can be verified end-to-end without moving
+    any real money. Remove this route once go-live verification is done."""
+    if body.admin_key != ADMIN_KEY:
+        raise HTTPException(403, "Invalid admin key")
+    guide = next((g for g in GUIDE_CATALOG if g["id"] == body.guide_id), None)
+    if not guide:
+        raise HTTPException(404, "Unknown guide")
+    buyer = db.execute("SELECT * FROM users WHERE email = ?", [body.user_email.strip().lower()]).fetchone()
+    if not buyer:
+        raise HTTPException(404, "No user with that email — sign up a test account first.")
+    fake_session_id = f"cs_simulated_{uuid.uuid4().hex[:24]}"
+    amount_total = guide["price"]
+    db.execute(
+        """INSERT INTO guide_purchases
+               (user_id, guide_id, unlocked_by, stripe_session_id, stripe_payment_intent, amount_paid)
+           VALUES (?, ?, 'simulated', ?, ?, ?)
+           ON CONFLICT(user_id, guide_id) DO UPDATE SET
+               stripe_session_id = excluded.stripe_session_id,
+               stripe_payment_intent = excluded.stripe_payment_intent,
+               amount_paid = excluded.amount_paid""",
+        [buyer["id"], guide["id"], fake_session_id, f"pi_simulated_{uuid.uuid4().hex[:24]}", amount_total],
+    )
+    db.commit()
+    import datetime
+    purchased_at_str = datetime.datetime.utcnow().strftime("%B %d, %Y")
+    email_service.send_email(
+        to=buyer["email"],
+        subject=f"Your receipt — {guide['name']} Guide",
+        html=email_service.render_receipt_email(
+            guide_name=guide["name"],
+            amount_paid=amount_total,
+            purchased_at=purchased_at_str,
+        ),
+    )
+    email_service.send_email(
+        to=ACCOUNTING_EMAIL,
+        subject=f"[Purchase] {guide['name']} Guide — ${amount_total:,.2f}",
+        html=email_service.render_accounting_notification_email(
+            buyer_email=buyer["email"],
+            guide_name=guide["name"],
+            amount_paid=amount_total,
+            purchased_at=purchased_at_str,
+        ),
+    )
+    return {"simulated": True, "guide_id": guide["id"], "amount": amount_total, "session_id": fake_session_id}
 
 
 # ---------- Affiliate program ----------
