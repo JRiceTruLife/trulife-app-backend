@@ -1,0 +1,6 @@
+fastapi==0.136.3
+uvicorn==0.44.0
+bcrypt==5.0.0
+pyjwt==2.13.0
+pydantic==2.12.5
+stripe==15.6.1

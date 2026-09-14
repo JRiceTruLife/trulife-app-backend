@@ -1,0 +1,6 @@
+trulife.db
+trulife.db-shm
+trulife.db-wal
+__pycache__/
+*.pyc
+.env*
