@@ -21,6 +21,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
 import bcrypt
+import httpx
 import jwt
 import stripe
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -129,6 +130,15 @@ APP_BASE_URL = os.environ.get("TRULIFE_APP_BASE_URL", "").rstrip("/")
 if IS_PRODUCTION and not os.environ.get("TRULIFE_RESEND_API_KEY"):
     raise RuntimeError("TRULIFE_RESEND_API_KEY must be set when TRULIFE_ENV=production.")
 EMAIL_ENABLED = email_service.EMAIL_ENABLED
+
+# --- Comps Engine data (RentCast) ---
+# TRULIFE_RENTCAST_API_KEY powers real sold-comp and rent-estimate lookups.
+# Optional in both dev and production: without it, the endpoint below returns
+# a 503 and the frontend falls back to its built-in sample comps rather than
+# breaking the tool entirely.
+RENTCAST_API_KEY = os.environ.get("TRULIFE_RENTCAST_API_KEY", "")
+RENTCAST_ENABLED = bool(RENTCAST_API_KEY)
+RENTCAST_BASE_URL = "https://api.rentcast.io/v1"
 
 
 def get_db():
@@ -421,6 +431,9 @@ RATE_LIMITS = {
     # trigger an email send / accept a guessable-length code.
     "auth_forgot_password": (3, 300),
     "auth_forgot_password_verify": (8, 300),
+    # RentCast API usage is metered on our plan — cap live comps lookups
+    # per-IP so one user (or a bot) can't burn the monthly request quota.
+    "comps_lookup": (12, 3600),
 }
 
 
@@ -567,6 +580,14 @@ class DealBody(BaseModel):
 class CompsBody(BaseModel):
     search_label: str = Field(default="", max_length=300)
     payload: dict = Field(default_factory=dict)
+
+
+class CompsSearchBody(BaseModel):
+    address: str = Field(max_length=300)
+    beds: float = Field(default=3, ge=0, le=20)
+    baths: float = Field(default=2, ge=0, le=20)
+    sqft: float = Field(default=1500, ge=100, le=50000)
+    property_type: str = Field(default="Single Family", max_length=50)
 
 
 class UnlockBody(BaseModel):
@@ -827,6 +848,100 @@ def delete_comps(comps_id: int, authorization: str | None = Header(default=None)
     db.execute("DELETE FROM comps_history WHERE id = ? AND user_id = ?", [comps_id, row["id"]])
     db.commit()
     return {"deleted": comps_id}
+
+
+@app.post("/api/comps/lookup")
+def comps_lookup(body: CompsSearchBody, request: Request):
+    """Live sold-comp + rent-estimate lookup via RentCast.
+
+    No login required (the Comps Engine screener is usable by guests), but
+    rate-limited per-IP since RentCast usage is metered on our plan. Returns
+    503 if no RentCast key is configured, or 502 if RentCast itself errors —
+    either way the frontend falls back to its built-in sample comps.
+    """
+    if not RENTCAST_ENABLED:
+        raise HTTPException(503, "Live comps data is not configured")
+    enforce_rate_limit("comps_lookup", request)
+
+    address = body.address.strip()
+    if not address:
+        raise HTTPException(400, "Address is required")
+
+    headers = {"Accept": "application/json", "X-Api-Key": RENTCAST_API_KEY}
+    bed_lo = max(0, body.beds - 1)
+    bed_hi = body.beds + 1
+
+    def fetch_sold(radius_miles: float):
+        params = {
+            "address": address,
+            "radius": radius_miles,
+            "saleDateRange": 365,
+            "propertyType": body.property_type,
+            "bedrooms": f"{bed_lo}:{bed_hi}",
+            "limit": 25,
+        }
+        resp = httpx.get(f"{RENTCAST_BASE_URL}/properties", params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    try:
+        properties = fetch_sold(1.5)
+        if len(properties) < 4:
+            properties = fetch_sold(4)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(502, f"RentCast lookup failed: {exc.response.status_code}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(502, "RentCast lookup failed — please try again") from exc
+
+    comps = []
+    for p in properties:
+        if not p.get("lastSaleDate") or not p.get("lastSalePrice") or not p.get("squareFootage"):
+            continue
+        comps.append({
+            "addr": p.get("formattedAddress", ""),
+            "sold": p["lastSaleDate"][:10],
+            "price": p["lastSalePrice"],
+            "sqft": p["squareFootage"],
+            "beds": p.get("bedrooms", body.beds),
+            "baths": p.get("bathrooms", body.baths),
+            "dom": None,  # not provided by RentCast's sold-property data
+        })
+
+    # Reno tier is our own screening concept, not a RentCast field. Estimate
+    # it from where each comp's $/sqft falls relative to the group's median
+    # — above-median implies more finished/renovated, below implies dated.
+    if comps:
+        psf_values = sorted(c["price"] / c["sqft"] for c in comps)
+        median_psf = psf_values[len(psf_values) // 2]
+        for c in comps:
+            psf = c["price"] / c["sqft"]
+            if psf >= median_psf * 1.1:
+                c["reno"] = "high"
+            elif psf <= median_psf * 0.9:
+                c["reno"] = "low"
+            else:
+                c["reno"] = "mid"
+
+    rent_estimate = None
+    try:
+        rent_params = {
+            "address": address,
+            "propertyType": body.property_type,
+            "bedrooms": body.beds,
+            "bathrooms": body.baths,
+            "squareFootage": body.sqft,
+        }
+        rent_resp = httpx.get(f"{RENTCAST_BASE_URL}/avm/rent/long-term", params=rent_params, headers=headers, timeout=15)
+        if rent_resp.status_code == 200:
+            rent_estimate = rent_resp.json().get("rent")
+    except httpx.HTTPError:
+        pass  # rent estimate is a nice-to-have; sold comps are the core data
+
+    if rent_estimate:
+        for c in comps:
+            c["rent"] = rent_estimate
+
+    return {"source": "rentcast", "comps": comps, "rentEstimate": rent_estimate}
 
 
 # ---------- Guide purchases ----------
