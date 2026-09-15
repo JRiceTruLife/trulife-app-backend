@@ -26,6 +26,8 @@ import jwt
 import stripe
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import email_service
@@ -391,6 +393,35 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+# --- Serve the site itself from this same service/domain ---
+# Lets a single Render web service (and a single custom domain) host both
+# the API and the app, instead of splitting the frontend onto a separate
+# static host. Static assets (images, PDFs, videos under /design, logos,
+# etc.) are served at their existing relative paths; "/" and any
+# non-/api/* path serve index.html so client-side navigation still works.
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_STATIC_DIR):
+    app.mount("/design", StaticFiles(directory=os.path.join(_STATIC_DIR, "design")), name="design-assets")
+    if os.path.isdir(os.path.join(_STATIC_DIR, "assets")):
+        app.mount("/assets", StaticFiles(directory=os.path.join(_STATIC_DIR, "assets")), name="assets")
+
+    _INDEX_HTML_PATH = os.path.join(_STATIC_DIR, "index.html")
+
+    @app.get("/{fname}", include_in_schema=False)
+    async def _static_root_file(fname: str):
+        """Serves top-level static files (logo.svg, icon.svg, hero.png, ...)
+        and falls back to index.html for app routes (e.g. /dashboard) so
+        client-side navigation and hard refreshes both work. /api/* is
+        never reached here since FastAPI matches those routes first."""
+        candidate = os.path.join(_STATIC_DIR, fname)
+        if os.path.isfile(candidate) and os.path.commonpath([_STATIC_DIR, candidate]) == _STATIC_DIR:
+            return FileResponse(candidate)
+        return FileResponse(_INDEX_HTML_PATH)
+
+    @app.get("/", include_in_schema=False)
+    async def _static_index():
+        return FileResponse(_INDEX_HTML_PATH)
 
 # --- Request body size cap ---
 # Field-level Field(max_length=...) constraints cover plain string fields,
