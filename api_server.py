@@ -83,10 +83,27 @@ AFFILIATE_PRODUCTS = [
     "Design Guide",
     "Architecture Plan",
     "Architecture Custom",
-    "Fix & Flip Foundations Course",
+    "Fix & Flip Module",
     "5 Step Method Module",
     "Coaching",
 ]
+
+# Maps a Stripe-sold catalog item (GUIDE_CATALOG id) to the affiliate
+# commission product it counts as. Used by the webhook to auto-credit the
+# referring affiliate when a referred client buys anything, at any time.
+GUIDE_TO_AFFILIATE_PRODUCT = {
+    "linder": "Design Guide",
+    "forestoak": "Design Guide",
+    "canyon": "Design Guide",
+    "colonial": "Design Guide",
+    "five-step-method": "5 Step Method Module",
+    "fix-flip": "Fix & Flip Module",
+}
+
+# How long a ?ref=<slug> visit stays eligible to attach a new signup to the
+# affiliate. The frontend stores the ref locally and sends it with signup;
+# this is the server-side ceiling on that window (days).
+AFFILIATE_ATTRIBUTION_DAYS = 90
 
 # The 4 canonical design guides + the 5 Step Method module — shared catalog,
 # purchase status is per-user. Same guide_purchases table backs both.
@@ -269,6 +286,29 @@ def init_db():
         """
     )
     db.commit()
+    # Migration: lifetime affiliate attribution on the user record. A user
+    # is attached to the affiliate whose link they signed up through, and
+    # every later purchase credits that affiliate (residual income).
+    user_cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
+    for col, ddl in [
+        ("referred_by_affiliate_id", "ALTER TABLE users ADD COLUMN referred_by_affiliate_id INTEGER"),
+        ("referred_at", "ALTER TABLE users ADD COLUMN referred_at TIMESTAMP"),
+    ]:
+        if col not in user_cols:
+            db.execute(ddl)
+            db.commit()
+    # Migration: affiliate_sales gains a link to the buying client, a source
+    # marker (manual vs. automatic Stripe credit) and the Stripe session id
+    # for idempotency so a retried webhook can never double-credit.
+    sale_cols = {r["name"] for r in db.execute("PRAGMA table_info(affiliate_sales)").fetchall()}
+    for col, ddl in [
+        ("user_id", "ALTER TABLE affiliate_sales ADD COLUMN user_id INTEGER"),
+        ("source", "ALTER TABLE affiliate_sales ADD COLUMN source TEXT DEFAULT 'manual'"),
+        ("stripe_session_id", "ALTER TABLE affiliate_sales ADD COLUMN stripe_session_id TEXT"),
+    ]:
+        if col not in sale_cols:
+            db.execute(ddl)
+            db.commit()
     # Migration for DBs created before is_owner existed.
     cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
     if "is_owner" not in cols:
@@ -562,12 +602,65 @@ def affiliate_rate(row, product: str) -> float:
     return rates.get(product, row["default_rate"])
 
 
+def mask_email(email: str | None) -> str:
+    """j***@gmail.com — enough for an affiliate to recognise their own
+    referral without handing them the client's full contact details."""
+    if not email or "@" not in email:
+        return ""
+    local, _, domain = email.partition("@")
+    return (local[:1] or "*") + "***@" + domain
+
+
+def affiliate_by_slug(slug: str | None):
+    if not slug:
+        return None
+    slug = slug.strip().lower()[:100]
+    if not slug:
+        return None
+    return db.execute("SELECT * FROM affiliates WHERE slug = ? AND active = 1", [slug]).fetchone()
+
+
+def record_affiliate_sale_for_purchase(user_row, guide: dict, amount: float, stripe_session_id: str | None) -> dict | None:
+    """Auto-credit the client's referring affiliate for a real Stripe
+    purchase. Lifetime attribution: the affiliate who brought the client in
+    earns on every product that client buys later, not just the first one.
+    Idempotent on stripe_session_id so webhook retries never double-credit.
+    Returns the inserted row summary, or None when nothing was credited."""
+    if not user_row or not user_row["referred_by_affiliate_id"]:
+        return None
+    aff = db.execute(
+        "SELECT * FROM affiliates WHERE id = ? AND active = 1", [user_row["referred_by_affiliate_id"]]
+    ).fetchone()
+    if not aff:
+        return None
+    if stripe_session_id:
+        dupe = db.execute(
+            "SELECT id FROM affiliate_sales WHERE stripe_session_id = ?", [stripe_session_id]
+        ).fetchone()
+        if dupe:
+            return None
+    import datetime
+    product = GUIDE_TO_AFFILIATE_PRODUCT.get(guide["id"], "Design Guide")
+    note = f"Auto-credited: {guide['name']} purchased by {mask_email(user_row['email'])}"
+    cur = db.execute(
+        "INSERT INTO affiliate_sales (affiliate_id, product, amount, note, sale_date, logged_by, user_id, source, stripe_session_id) "
+        "VALUES (?, ?, ?, ?, ?, NULL, ?, 'stripe', ?)",
+        [aff["id"], product, amount, note, datetime.date.today().isoformat(), user_row["id"], stripe_session_id],
+    )
+    db.commit()
+    rate = affiliate_rate(aff, product)
+    return {"id": cur.lastrowid, "affiliate_id": aff["id"], "product": product, "commission": amount * rate / 100, "rate": rate}
+
+
 # ---------- Schemas ----------
 
 class SignupBody(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=200)
     name: str = Field(default="", max_length=200)
+    # Affiliate slug captured from a ?ref=<slug> visit (stored client-side
+    # until signup). Optional; unknown/inactive slugs are ignored silently.
+    ref: str = Field(default="", max_length=100)
 
 
 class LoginBody(BaseModel):
@@ -673,6 +766,11 @@ class ClickBody(BaseModel):
     referrer: str = Field(default="", max_length=500)
 
 
+class AssignClientBody(BaseModel):
+    email: str = Field(max_length=254)
+    affiliate_id: int | None = None
+
+
 # ---------- Auth routes ----------
 
 @app.post("/api/auth/signup", status_code=201)
@@ -687,10 +785,21 @@ def signup(body: SignupBody, request: Request):
     if existing:
         raise HTTPException(409, "An account with this email already exists")
     pw_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
-    cur = db.execute(
-        "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)",
-        [email, pw_hash, body.name.strip()],
-    )
+    # Lifetime affiliate attribution happens exactly once, at signup. The
+    # slug comes from the ?ref= link the visitor arrived on; the frontend
+    # keeps it for AFFILIATE_ATTRIBUTION_DAYS and sends it here.
+    ref_aff = affiliate_by_slug(body.ref)
+    if ref_aff:
+        cur = db.execute(
+            "INSERT INTO users (email, password_hash, name, referred_by_affiliate_id, referred_at) "
+            "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+            [email, pw_hash, body.name.strip(), ref_aff["id"]],
+        )
+    else:
+        cur = db.execute(
+            "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)",
+            [email, pw_hash, body.name.strip()],
+        )
     db.commit()
     user_id = cur.lastrowid
     row = db.execute("SELECT * FROM users WHERE id = ?", [user_id]).fetchone()
@@ -1056,6 +1165,83 @@ def create_guide_checkout(body: CheckoutBody, authorization: str | None = Header
     return {"checkout_url": session.url, "session_id": session.id}
 
 
+def fulfill_checkout_session(session: dict) -> dict:
+    """Grant a paid Stripe Checkout session: unlock the guide, auto-credit the
+    referring affiliate (lifetime attribution), send receipts. Called from the
+    verified webhook below. Idempotent: a session is only fulfilled once."""
+    session_id = session["id"]
+    pending = db.execute(
+        "SELECT * FROM checkout_sessions WHERE stripe_session_id = ?", [session_id]
+    ).fetchone()
+    if not pending:
+        # Unknown session (or already processed and pruned) — ack so
+        # Stripe stops retrying, but grant nothing.
+        return {"received": True, "fulfilled": False}
+    if pending["status"] == "completed":
+        # Duplicate webhook delivery for a session we already fulfilled.
+        return {"received": True, "fulfilled": False}
+    if session.get("payment_status") != "paid":
+        return {"received": True, "fulfilled": False}
+    amount_total = session.get("amount_total") or 0
+    db.execute(
+        """INSERT INTO guide_purchases
+               (user_id, guide_id, unlocked_by, stripe_session_id, stripe_payment_intent, amount_paid)
+           VALUES (?, ?, 'stripe', ?, ?, ?)
+           ON CONFLICT(user_id, guide_id) DO UPDATE SET
+               stripe_session_id = excluded.stripe_session_id,
+               stripe_payment_intent = excluded.stripe_payment_intent,
+               amount_paid = excluded.amount_paid""",
+        [
+            pending["user_id"],
+            pending["guide_id"],
+            session_id,
+            session.get("payment_intent"),
+            amount_total / 100.0,
+        ],
+    )
+    db.execute(
+        "UPDATE checkout_sessions SET status = 'completed' WHERE stripe_session_id = ?", [session_id]
+    )
+    db.commit()
+    buyer = db.execute("SELECT * FROM users WHERE id = ?", [pending["user_id"]]).fetchone()
+    guide = next((g for g in GUIDE_CATALOG if g["id"] == pending["guide_id"]), None)
+    credited = None
+    if buyer and guide:
+        # Affiliate residual credit — the client's referring affiliate earns
+        # on this purchase automatically. Never blocks fulfillment.
+        try:
+            credited = record_affiliate_sale_for_purchase(buyer, guide, amount_total / 100.0, session_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"[affiliate] auto-credit failed for session {session_id}: {exc}")
+        # Receipt email — best-effort, never blocks fulfillment. If this
+        # fails the purchase is still correctly granted above; only the
+        # email send itself is skipped/logged.
+        import datetime
+        purchased_at_str = datetime.datetime.utcnow().strftime("%B %d, %Y")
+        email_service.send_email(
+            to=buyer["email"],
+            subject=f"Your receipt — {guide['name']} Guide",
+            html=email_service.render_receipt_email(
+                guide_name=guide["name"],
+                amount_paid=amount_total / 100.0,
+                purchased_at=purchased_at_str,
+            ),
+        )
+        # Internal accounting copy — separate send so a failure/delay on
+        # one side never blocks or depends on the other.
+        email_service.send_email(
+            to=ACCOUNTING_EMAIL,
+            subject=f"[Purchase] {guide['name']} Guide — ${amount_total / 100.0:,.2f}",
+            html=email_service.render_accounting_notification_email(
+                buyer_email=buyer["email"],
+                guide_name=guide["name"],
+                amount_paid=amount_total / 100.0,
+                purchased_at=purchased_at_str,
+            ),
+        )
+    return {"received": True, "fulfilled": True, "affiliate_credit": credited}
+
+
 @app.post("/api/stripe/webhook")
 async def stripe_webhook(request: Request, stripe_signature: str | None = Header(default=None, alias="Stripe-Signature")):
     """Stripe calls this directly — never trust it without verifying the
@@ -1071,69 +1257,7 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
 
     if event["type"] == "checkout.session.completed":
         session = event["data"]["object"].to_dict()
-        session_id = session["id"]
-        pending = db.execute(
-            "SELECT * FROM checkout_sessions WHERE stripe_session_id = ?", [session_id]
-        ).fetchone()
-        if not pending:
-            # Unknown session (or already processed and pruned) — ack so
-            # Stripe stops retrying, but grant nothing.
-            return {"received": True}
-        if pending["status"] == "completed":
-            # Duplicate webhook delivery for a session we already fulfilled.
-            return {"received": True}
-        if session.get("payment_status") != "paid":
-            return {"received": True}
-        amount_total = session.get("amount_total") or 0
-        db.execute(
-            """INSERT INTO guide_purchases
-                   (user_id, guide_id, unlocked_by, stripe_session_id, stripe_payment_intent, amount_paid)
-               VALUES (?, ?, 'stripe', ?, ?, ?)
-               ON CONFLICT(user_id, guide_id) DO UPDATE SET
-                   stripe_session_id = excluded.stripe_session_id,
-                   stripe_payment_intent = excluded.stripe_payment_intent,
-                   amount_paid = excluded.amount_paid""",
-            [
-                pending["user_id"],
-                pending["guide_id"],
-                session_id,
-                session.get("payment_intent"),
-                amount_total / 100.0,
-            ],
-        )
-        db.execute(
-            "UPDATE checkout_sessions SET status = 'completed' WHERE stripe_session_id = ?", [session_id]
-        )
-        db.commit()
-        # Receipt email — best-effort, never blocks fulfillment. If this
-        # fails the purchase is still correctly granted above; only the
-        # email send itself is skipped/logged.
-        buyer = db.execute("SELECT * FROM users WHERE id = ?", [pending["user_id"]]).fetchone()
-        guide = next((g for g in GUIDE_CATALOG if g["id"] == pending["guide_id"]), None)
-        if buyer and guide:
-            import datetime
-            purchased_at_str = datetime.datetime.utcnow().strftime("%B %d, %Y")
-            email_service.send_email(
-                to=buyer["email"],
-                subject=f"Your receipt — {guide['name']} Guide",
-                html=email_service.render_receipt_email(
-                    guide_name=guide["name"],
-                    amount_paid=amount_total / 100.0,
-                    purchased_at=purchased_at_str,
-                ),
-            )
-            # Internal accounting copy — separate send so a failure/delay on
-            # one side never blocks or depends on the other.
-            email_service.send_email(
-                to=ACCOUNTING_EMAIL,
-                subject=f"[Purchase] {guide['name']} Guide — ${amount_total / 100.0:,.2f}",
-                html=email_service.render_accounting_notification_email(
-                    buyer_email=buyer["email"],
-                    guide_name=guide["name"],
-                    amount_paid=amount_total / 100.0,
-                    purchased_at=purchased_at_str,
-                ),
-            )
+        fulfill_checkout_session(session)
     elif event["type"] in ("checkout.session.expired",):
         session = event["data"]["object"].to_dict()
         db.execute(
@@ -1199,7 +1323,7 @@ def affiliate_overview(authorization: str | None = Header(default=None)):
         affiliates = [a for a in affiliates if a["id"] == me["id"]]
 
     cards = []
-    grand_sales = grand_comm = grand_paid = grand_clicks = 0.0
+    grand_sales = grand_comm = grand_paid = grand_clicks = grand_clients = 0.0
     for a in affiliates:
         sales = db.execute("SELECT * FROM affiliate_sales WHERE affiliate_id = ?", [a["id"]]).fetchall()
         total_sales = sum(s["amount"] for s in sales)
@@ -1210,20 +1334,27 @@ def affiliate_overview(authorization: str | None = Header(default=None)):
         click_count = db.execute(
             "SELECT COUNT(*) AS c FROM affiliate_clicks WHERE affiliate_id = ?", [a["id"]]
         ).fetchone()["c"]
+        client_count = db.execute(
+            "SELECT COUNT(*) AS c FROM users WHERE referred_by_affiliate_id = ?", [a["id"]]
+        ).fetchone()["c"]
+        auto_count = sum(1 for s in sales if (s["source"] or "manual") == "stripe")
         cards.append({
             **affiliate_public(a),
             "sale_count": len(sales),
+            "auto_sale_count": auto_count,
             "total_sales": total_sales,
             "total_commission": total_comm,
             "total_paid": total_paid,
             "balance": total_comm - total_paid,
             "click_count": click_count,
-            "tracking_link": f"https://trulifeproperties.com/?ref={a['slug']}",
+            "client_count": client_count,
+            "tracking_link": tracking_link_for(a["slug"]),
         })
         grand_sales += total_sales
         grand_comm += total_comm
         grand_paid += total_paid
         grand_clicks += click_count
+        grand_clients += client_count
 
     return {
         "is_admin": bool(me["is_admin"]),
@@ -1234,9 +1365,17 @@ def affiliate_overview(authorization: str | None = Header(default=None)):
             "paid": grand_paid,
             "balance": grand_comm - grand_paid,
             "clicks": grand_clicks,
+            "clients": grand_clients,
         },
         "products": AFFILIATE_PRODUCTS,
     }
+
+
+def tracking_link_for(slug: str) -> str:
+    # The ?ref= capture + signup attribution runs inside the app itself, so
+    # the link must land on the app origin (not the marketing site).
+    base = APP_BASE_URL or "https://app.trulifeproperties.com"
+    return f"{base}/?ref={slug}"
 
 
 @app.get("/api/affiliate/sales")
@@ -1257,6 +1396,11 @@ def affiliate_sales_list(authorization: str | None = Header(default=None)):
     for r in rows:
         aff = db.execute("SELECT * FROM affiliates WHERE id = ?", [r["affiliate_id"]]).fetchone()
         rate = affiliate_rate(aff, r["product"])
+        client_label = ""
+        if r["user_id"]:
+            u = db.execute("SELECT email, name FROM users WHERE id = ?", [r["user_id"]]).fetchone()
+            if u:
+                client_label = u["email"] if me["is_admin"] else mask_email(u["email"])
         out.append({
             "id": r["id"],
             "affiliate_id": r["affiliate_id"],
@@ -1269,6 +1413,8 @@ def affiliate_sales_list(authorization: str | None = Header(default=None)):
             "rate": rate,
             "commission": r["amount"] * rate / 100,
             "created_at": r["created_at"],
+            "source": r["source"] or "manual",
+            "client": client_label,
         })
     return out
 
@@ -1298,7 +1444,12 @@ def affiliate_log_sale(body: SaleBody, authorization: str | None = Header(defaul
 def affiliate_delete_sale(sale_id: int, authorization: str | None = Header(default=None)):
     me = current_affiliate(authorization)
     if not me["is_admin"]:
-        db.execute("DELETE FROM affiliate_sales WHERE id = ? AND affiliate_id = ?", [sale_id, me["id"]])
+        # Affiliates may only remove their own manual entries; automatic
+        # Stripe credits are the system of record and admin-only.
+        db.execute(
+            "DELETE FROM affiliate_sales WHERE id = ? AND affiliate_id = ? AND COALESCE(source, 'manual') = 'manual'",
+            [sale_id, me["id"]],
+        )
     else:
         db.execute("DELETE FROM affiliate_sales WHERE id = ?", [sale_id])
     db.commit()
@@ -1399,6 +1550,80 @@ def affiliate_admin_payout(body: PayoutBody, authorization: str | None = Header(
     )
     db.commit()
     return {"ok": True}
+
+
+# ---------- Referred clients (lifetime attribution) ----------
+
+def _client_row(u, is_admin: bool) -> dict:
+    purchases = db.execute(
+        "SELECT guide_id, amount_paid, purchased_at, unlocked_by FROM guide_purchases WHERE user_id = ? ORDER BY purchased_at",
+        [u["id"]],
+    ).fetchall()
+    paid = [p for p in purchases if p["unlocked_by"] == "stripe"]
+    total = sum((p["amount_paid"] or 0) for p in paid)
+    names = []
+    for p in paid:
+        g = next((x for x in GUIDE_CATALOG if x["id"] == p["guide_id"]), None)
+        names.append(g["name"] if g else p["guide_id"])
+    aff = db.execute("SELECT name, slug FROM affiliates WHERE id = ?", [u["referred_by_affiliate_id"]]).fetchone() if u["referred_by_affiliate_id"] else None
+    return {
+        "user_id": u["id"],
+        "name": u["name"] if is_admin else (u["name"].split(" ")[0] if u["name"] else ""),
+        "email": u["email"] if is_admin else mask_email(u["email"]),
+        "joined": u["created_at"],
+        "referred_at": u["referred_at"],
+        "affiliate_id": u["referred_by_affiliate_id"],
+        "affiliate_name": aff["name"] if aff else "",
+        "purchase_count": len(paid),
+        "total_spent": total,
+        "products": names,
+        "last_purchase": paid[-1]["purchased_at"] if paid else None,
+    }
+
+
+@app.get("/api/affiliate/clients")
+def affiliate_clients(authorization: str | None = Header(default=None)):
+    """Clients attached to an affiliate. Admin sees everyone (with full
+    contact details); an affiliate sees only their own referrals, with
+    emails masked. Every purchase a client makes, now or later, shows here
+    and is auto-credited to the affiliate."""
+    me = current_affiliate(authorization)
+    if me["is_admin"]:
+        rows = db.execute(
+            "SELECT * FROM users WHERE referred_by_affiliate_id IS NOT NULL ORDER BY created_at DESC"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM users WHERE referred_by_affiliate_id = ? ORDER BY created_at DESC", [me["id"]]
+        ).fetchall()
+    return [_client_row(u, bool(me["is_admin"])) for u in rows]
+
+
+@app.post("/api/affiliate/clients/assign")
+def affiliate_assign_client(body: AssignClientBody, authorization: str | None = Header(default=None)):
+    """Admin: manually attach (or detach, with affiliate_id null) an existing
+    app account to an affiliate — for signups where the tracking link was
+    not used but the referral is known."""
+    me = current_affiliate(authorization)
+    if not me["is_admin"]:
+        raise HTTPException(403, "Admin access required")
+    email = body.email.strip().lower()
+    user = db.execute("SELECT * FROM users WHERE email = ?", [email]).fetchone()
+    if not user:
+        raise HTTPException(404, "No app account with that email")
+    if body.affiliate_id is None:
+        db.execute("UPDATE users SET referred_by_affiliate_id = NULL, referred_at = NULL WHERE id = ?", [user["id"]])
+    else:
+        aff = db.execute("SELECT id FROM affiliates WHERE id = ? AND active = 1", [body.affiliate_id]).fetchone()
+        if not aff:
+            raise HTTPException(404, "Affiliate not found")
+        db.execute(
+            "UPDATE users SET referred_by_affiliate_id = ?, referred_at = CURRENT_TIMESTAMP WHERE id = ?",
+            [body.affiliate_id, user["id"]],
+        )
+    db.commit()
+    user = db.execute("SELECT * FROM users WHERE id = ?", [user["id"]]).fetchone()
+    return _client_row(user, True)
 
 
 if __name__ == "__main__":
