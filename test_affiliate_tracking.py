@@ -97,6 +97,7 @@ class ReferralTests(unittest.TestCase):
         self.assertTrue(result["fulfilled"])
         self.assertEqual(send.call_count, 2)
         self.assertEqual(send.call_args_list[1].kwargs["to"], api.ACCOUNTING_EMAIL)
+        self.assertNotEqual(send.call_args_list[1].kwargs["to"], "info@trulifeproperties.com")
         self.assertFalse(self.fulfill(session)[0]["fulfilled"])
         self.fulfill(self.checkout(user, "cs_test_two", "five-step-method"))
         sales = self.client.get("/api/affiliate/sales", headers=self.ah).json()

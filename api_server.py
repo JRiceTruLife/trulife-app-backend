@@ -370,7 +370,9 @@ AFFILIATE_ADMIN_EMAIL = os.environ.get("TRULIFE_AFFILIATE_ADMIN_EMAIL", "justin@
 # copy of the receipt here (in addition to the buyer's own receipt), so
 # there's a record of transactions for bookkeeping without depending on any
 # one person's personal inbox.
-ACCOUNTING_EMAIL = os.environ.get("TRULIFE_ACCOUNTING_EMAIL", "info@trulifeproperties.com").strip().lower()
+ACCOUNTING_EMAIL = os.environ.get("TRULIFE_ACCOUNTING_EMAIL", "finances@trulifefiles.com").strip().lower()
+if not ACCOUNTING_EMAIL or ACCOUNTING_EMAIL == "info@trulifeproperties.com":
+    ACCOUNTING_EMAIL = "finances@trulifefiles.com"
 AFFILIATE_ADMIN_PASSWORD = _require_secret("TRULIFE_AFFILIATE_ADMIN_PASSWORD", "TruLife2026!")
 
 
