@@ -2466,6 +2466,7 @@ body {
       <p class="auth-sub" id="auth-signup-sub">Save deals, comps, and design guides to your own profile.</p>
       <div id="auth-signup-error" class="auth-error"></div>
       <div class="auth-field"><label>Name</label><input type="text" id="auth-signup-name" autocomplete="name" /></div>
+      <div class="auth-field"><label for="auth-signup-ref">Invite code (optional)</label><input type="text" id="auth-signup-ref" maxlength="100" autocomplete="off" placeholder="Code from your affiliate's link" /><p style="font-size:12px;line-height:1.5;margin:8px 0 0;">Your referring affiliate can see your first name, masked email, signup date and purchase activity. The referral stays linked to this account.</p></div>
       <div class="auth-field"><label>Email</label><input type="email" id="auth-signup-email" autocomplete="username" required /></div>
       <div class="auth-field"><label>Password</label><input type="password" id="auth-signup-password" autocomplete="new-password" minlength="8" required /></div>
       <button type="submit" class="auth-submit" id="auth-signup-submit">Create Account</button>
@@ -2559,7 +2560,7 @@ body {
         <div class="aff-panel-head">
           <div>
             <h2 class="aff-h2" id="aff-clients-title">My Clients</h2>
-            <p class="aff-sub" style="margin-bottom:0;">Everyone who created an account through a tracking link. They stay attached for life &mdash; every product they buy later is credited automatically.</p>
+            <p class="aff-sub" style="margin-bottom:0;">Accounts registered with your invite link or code stay attached to you. Verified purchases through connected payment flows appear here, including later purchases. Free access and external retailer purchases do not count as sales.</p>
           </div>
           <button type="button" class="aff-btn-sm" id="aff-assign-client-btn" style="display:none;">+ Attach Client</button>
         </div>
@@ -8210,17 +8211,26 @@ document.getElementById('auth-login-form').addEventListener('submit', async (e) 
 // of the JWT's own longer outer expiry from the server.
 const AFFILIATE_IDLE_MS = 10 * 60 * 1000;
 let _affiliateToken = null;
+let _affiliateSessionSerial = 0;
 let _affiliateUser = null;
 let _affiliateIdleTimer = null;
 
 function getAffiliateToken() { return _affiliateToken; }
 
 async function affiliateFetch(path, opts) {
+  const serial = _affiliateSessionSerial;
   opts = opts || {};
   const headers = Object.assign({}, opts.headers || {});
   if (_affiliateToken) headers['Authorization'] = 'Bearer ' + _affiliateToken;
   if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   const res = await fetch(API + path, Object.assign({}, opts, { headers }));
+  if (serial !== _affiliateSessionSerial) throw new Error('Affiliate session expired');
+  const parseJson = res.json.bind(res);
+  res.json = async () => {
+    const data = await parseJson();
+    if (serial !== _affiliateSessionSerial) throw new Error('Affiliate session expired');
+    return data;
+  };
   if (res.status === 401) {
     affiliateLogout('Your affiliate session expired. Please log in again.');
     throw new Error('Affiliate session expired');
@@ -8256,6 +8266,9 @@ function registerAffiliateActivity() {
 });
 
 function affiliateLogout(message) {
+  _affiliateSessionSerial++;
+  _affOverviewCache = null;
+  document.querySelectorAll('#aff-stat-grid, #aff-affiliate-cards, #aff-links-list, #aff-clients-stats, #aff-clients-table tbody, #aff-sales-table tbody, #aff-affiliates-table tbody, #aff-assign-affiliate').forEach(el => { el.innerHTML = ''; });
   clearTimeout(_affiliateIdleTimer);
   _affiliateToken = null;
   _affiliateUser = null;
@@ -8314,6 +8327,7 @@ function enterAffiliatePortal() {
   const isAdmin = !!(_affiliateUser && _affiliateUser.is_admin);
   const affTabBtn = document.getElementById('aff-tab-affiliates');
   if (affTabBtn) affTabBtn.style.display = isAdmin ? '' : 'none';
+  document.querySelector('[data-aff-tab="log-sale"]').style.display = isAdmin ? '' : 'none';
   document.querySelectorAll('.aff-admin-col').forEach(el => { el.style.display = isAdmin ? '' : 'none'; });
   const clientsTitle = document.getElementById('aff-clients-title');
   if (clientsTitle) clientsTitle.textContent = isAdmin ? 'Referred Clients' : 'My Clients';
@@ -8323,6 +8337,7 @@ function enterAffiliatePortal() {
 }
 
 function affSwitchTab(tab) {
+  if ((tab === 'log-sale' || tab === 'affiliates') && !(_affiliateUser && _affiliateUser.is_admin)) return;
   document.querySelectorAll('.aff-tab').forEach(btn => {
     btn.classList.toggle('active', btn.getAttribute('data-aff-tab') === tab);
   });
@@ -8558,7 +8573,8 @@ async function loadAffLinks() {
     wrap.innerHTML = list.map(a => (
       '<div class="aff-link-row">' +
         '<div><div style="font-weight:700;color:var(--navy);font-size:0.85rem;margin-bottom:2px;">' + escapeHtml(a.name) + '</div>' +
-        '<div class="aff-link-url">' + escapeHtml(a.tracking_link) + '</div></div>' +
+        '<div class="aff-link-url">' + escapeHtml(a.tracking_link) + '</div>' +
+        '<div style="font-size:12px;margin-top:8px;">Invite code: <strong>' + escapeHtml(a.slug) + '</strong>. Use this code at signup if switching devices or installing the app.</div></div>' +
         '<button type="button" class="aff-copy-btn" data-link="' + escapeHtml(a.tracking_link) + '">Copy</button>' +
       '</div>'
     )).join('') || '<p class="aff-sub">No tracking links yet.</p>';
@@ -8590,15 +8606,15 @@ async function loadAffSales() {
       '<tr data-id="' + s.id + '">' +
         '<td>' + escapeHtml(s.sale_date || '') + '</td>' +
         '<td>' + escapeHtml(s.affiliate_name || '') + '</td>' +
-        '<td>' + escapeHtml(s.product) + '</td>' +
+        '<td>' + escapeHtml(s.product) + (s.source !== 'manual' && s.note ? '<br><small>' + escapeHtml(s.note) + '</small>' : '') + '</td>' +
         '<td>' + (s.client ? escapeHtml(s.client) : '<span style="color:#9296a6;">\u2014</span>') + '</td>' +
-        '<td class="num">' + affMoney(s.amount) + '</td>' +
+        '<td class="num">' + affMoney(s.net_amount == null ? s.amount : s.net_amount) + (s.refunded_amount ? '<br><small>Refund: ' + affMoney(s.refunded_amount) + '</small>' : '') + '</td>' +
         '<td class="num">' + s.rate + '%</td>' +
         '<td class="num">' + affMoney(s.commission) + '</td>' +
-        '<td>' + (s.source === 'stripe'
-          ? '<span class="aff-badge aff-badge-auto" title="' + escapeHtml(s.note || '') + '">Auto (Stripe)</span>'
+        '<td>' + (s.source !== 'manual'
+          ? '<span class="aff-badge aff-badge-auto" title="' + escapeHtml(s.note || '') + '">Verified (' + escapeHtml(s.source) + ')</span>'
           : '<span class="aff-badge aff-badge-manual" title="' + escapeHtml(s.note || '') + '">Manual</span>') + '</td>' +
-        '<td>' + ((s.source === 'stripe' && !(_affiliateUser && _affiliateUser.is_admin)) ? '' : '<button type="button" class="aff-del-btn" data-id="' + s.id + '">Delete</button>') + '</td>' +
+        '<td>' + ((s.source === 'manual' && _affiliateUser && _affiliateUser.is_admin) ? '<button type="button" class="aff-del-btn" data-id="' + s.id + '">Delete</button>' : '') + '</td>' +
       '</tr>'
     )).join('') || '<tr><td colspan="9">No sales logged yet.</td></tr>';
 
@@ -8659,8 +8675,7 @@ async function loadAffClients() {
       const sel = document.getElementById('aff-assign-affiliate');
       if (sel && !sel.options.length) {
         const ov = await (await affiliateFetch('/api/affiliate/overview')).json();
-        sel.innerHTML = (ov.affiliates || []).map(a => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join('') +
-          '<option value="">\u2014 Detach from affiliate \u2014</option>';
+        sel.innerHTML = (ov.affiliates || []).map(a => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join('');
       }
     }
   } catch (err) {
@@ -8710,7 +8725,7 @@ document.getElementById('auth-signup-form').addEventListener('submit', async (e)
   const password = document.getElementById('auth-signup-password').value;
   btn.disabled = true; btn.textContent = 'Creating account\u2026';
   try {
-    const ref = getStoredAffiliateRef();
+    const ref = document.getElementById('auth-signup-ref').value.trim();
     const res = await fetch(API + '/api/auth/signup', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, email, password, ref }),
@@ -8718,6 +8733,8 @@ document.getElementById('auth-signup-form').addEventListener('submit', async (e)
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Signup failed');
     try { localStorage.removeItem(AFF_REF_KEY); } catch (_) {}
+    _affiliateRefMemory = '';
+    document.getElementById('auth-signup-ref').value = '';
     setAuthToken(data.token, true);
     applyUserToChrome(data.user);
     hideAuthGate();
@@ -8775,7 +8792,9 @@ bootstrapAuth();
 // the affiliate for lifetime credit on everything they buy afterwards.
 const AFF_REF_KEY = 'tl_aff_ref';
 const AFF_REF_DAYS = 90;
+let _affiliateRefMemory = '';
 function getStoredAffiliateRef() {
+  if (_affiliateRefMemory) return _affiliateRefMemory;
   try {
     const raw = localStorage.getItem(AFF_REF_KEY);
     if (!raw) return '';
@@ -8785,18 +8804,34 @@ function getStoredAffiliateRef() {
     return String(data.ref);
   } catch (_) { return ''; }
 }
-(function trackAffiliateClick() {
+(async function trackAffiliateClick() {
   try {
-    const ref = new URLSearchParams(window.location.search).get('ref');
-    if (!ref) return;
-    // First touch wins: don't let a later link overwrite an existing ref.
-    if (!getStoredAffiliateRef()) {
-      try { localStorage.setItem(AFF_REF_KEY, JSON.stringify({ ref: ref.trim().toLowerCase(), ts: Date.now() })); } catch (_) {}
+    const input = document.getElementById('auth-signup-ref');
+    const stored = getStoredAffiliateRef();
+    const incoming = (new URLSearchParams(window.location.search).get('ref') || '').trim().toLowerCase();
+    _affiliateRefMemory = stored || incoming;
+    if (!input.value) input.value = _affiliateRefMemory;
+    const validate = async ref => {
+      const res = await fetch(API + '/api/affiliate/click', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ref, path: window.location.pathname, referrer: '' }),
+      });
+      if (!res.ok) throw new Error('Referral validation unavailable');
+      return (await res.json()).logged;
+    };
+    let chosen = stored || incoming;
+    if (!chosen) return;
+    if (!(await validate(chosen))) {
+      chosen = incoming && incoming !== chosen && await validate(incoming) ? incoming : '';
     }
-    fetch(API + '/api/affiliate/click', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ref: ref, path: window.location.pathname, referrer: document.referrer || '' }),
-    }).catch(() => {});
+    if (input.value === _affiliateRefMemory) input.value = chosen;
+    _affiliateRefMemory = chosen;
+    try {
+      if (!chosen) localStorage.removeItem(AFF_REF_KEY);
+      else if (chosen !== stored) localStorage.setItem(AFF_REF_KEY, JSON.stringify({ ref: chosen, ts: Date.now() }));
+    } catch (_) {
+      // Storage-blocked browsers retain the code in memory for this page.
+    }
   } catch (_) { /* ignore */ }
 })();
 
