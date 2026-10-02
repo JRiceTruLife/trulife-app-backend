@@ -11,6 +11,7 @@ Runs on port 8000. Provides:
 - Profile settings
 """
 import os
+import json
 import re
 import secrets
 import sqlite3
@@ -187,6 +188,15 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS account_state (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            preferences TEXT NOT NULL DEFAULT '{}',
+            project TEXT
+        );
+        CREATE TABLE IF NOT EXISTS seed_suppression (
+            role TEXT PRIMARY KEY
+        );
+
         CREATE TABLE IF NOT EXISTS saved_deals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -337,6 +347,8 @@ OWNER_NAME = os.environ.get("TRULIFE_OWNER_NAME", "Justin Rice")
 
 
 def seed_owner_account():
+    if db.execute("SELECT 1 FROM seed_suppression WHERE role='owner'").fetchone():
+        return
     existing = db.execute("SELECT * FROM users WHERE email = ?", [OWNER_EMAIL]).fetchone()
     pw_hash = bcrypt.hashpw(OWNER_PASSWORD.encode(), bcrypt.gensalt()).decode()
     if existing:
@@ -387,6 +399,8 @@ def seed_affiliates():
             )
         db.commit()
     # Ensure the owner/admin has an affiliate-portal login too (full dashboard access).
+    if db.execute("SELECT 1 FROM seed_suppression WHERE role='affiliate_admin'").fetchone():
+        return
     existing = db.execute("SELECT id FROM affiliates WHERE email = ?", [AFFILIATE_ADMIN_EMAIL]).fetchone()
     pw_hash = bcrypt.hashpw(AFFILIATE_ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode()
     if existing:
@@ -501,6 +515,7 @@ RATE_LIMITS = {
     "auth_login": (10, 60),
     "auth_signup": (5, 60),
     "auth_reset": (5, 60),
+    "auth_delete": (5, 300),
     "affiliate_login": (10, 60),
     # Forgot-password: tighter limits since these are unauthenticated and
     # trigger an email send / accept a guessable-length code.
@@ -541,6 +556,8 @@ def current_user(authorization: str | None):
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
     except jwt.PyJWTError:
         raise HTTPException(401, "Session expired, please log in again")
+    if not isinstance(payload.get("uid"), int) or "aff" in payload:
+        raise HTTPException(401, "Invalid account session")
     row = db.execute("SELECT * FROM users WHERE id = ?", [payload["uid"]]).fetchone()
     if not row:
         raise HTTPException(401, "Account not found")
@@ -645,6 +662,24 @@ class ProfileBody(BaseModel):
     phone: str = Field(default="", max_length=40)
 
 
+class DeleteAccountBody(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    confirmation: str
+
+
+class PreferencesBody(BaseModel):
+    market: str = Field(default="", max_length=200)
+    min_coc: float = Field(default=15, ge=0, le=1000)
+    min_profit: float = Field(default=30000, ge=0, le=1e10)
+    rate: float = Field(default=9.5, ge=0, le=100)
+    refi_ltv: float = Field(default=75, ge=0, le=100)
+    mao: float = Field(default=0.7, ge=0, le=1)
+
+
+class ProjectBody(BaseModel):
+    project: dict
+
+
 class ResetPasswordBody(BaseModel):
     """Authenticated change-password: requires the CURRENT password, not just
     the account email. The old email-only reset endpoint let anyone who knew
@@ -745,6 +780,12 @@ class AssignClientBody(BaseModel):
 
 # ---------- Auth routes ----------
 
+@app.get("/api/health")
+def health():
+    with closing(get_db()) as conn:
+        conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
+    return {"status": "ok"}
+
 @app.post("/api/auth/signup", status_code=201)
 def signup(body: SignupBody, request: Request):
     enforce_rate_limit("auth_signup", request)
@@ -807,7 +848,7 @@ def reset_password(body: ResetPasswordBody, authorization: str | None = Header(d
         enforce_rate_limit("auth_reset", request)
     row = current_user(authorization)
     if not bcrypt.checkpw(body.current_password.encode(), row["password_hash"].encode()):
-        raise HTTPException(401, "Current password is incorrect")
+        raise HTTPException(403, "Current password is incorrect")
     if len(body.new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters")
     pw_hash = bcrypt.hashpw(body.new_password.encode(), bcrypt.gensalt()).decode()
@@ -900,6 +941,75 @@ def update_profile(body: ProfileBody, authorization: str | None = Header(default
 
 
 # ---------- Saved deals ----------
+
+@app.get("/api/account/state")
+def get_account_state(authorization: str | None = Header(default=None)):
+    user = current_user(authorization)
+    state = db.execute("SELECT * FROM account_state WHERE user_id=?", [user["id"]]).fetchone()
+    return {
+        "preferences": json.loads(state["preferences"]) if state else {},
+        "project": json.loads(state["project"]) if state and state["project"] else None,
+    }
+
+
+@app.put("/api/account/preferences")
+def save_preferences(body: PreferencesBody, authorization: str | None = Header(default=None)):
+    user = current_user(authorization)
+    data = body.model_dump()
+    with closing(get_db()) as conn, conn:
+        conn.execute("INSERT INTO account_state(user_id,preferences) VALUES (?,?) "
+                     "ON CONFLICT(user_id) DO UPDATE SET preferences=excluded.preferences",
+                     [user["id"], json.dumps(data)])
+    return {"preferences": data}
+
+
+@app.put("/api/account/project")
+def save_project(body: ProjectBody, authorization: str | None = Header(default=None)):
+    user = current_user(authorization)
+    try:
+        payload = json.dumps(body.project, allow_nan=False)
+    except ValueError:
+        raise HTTPException(422, "Project values must be finite")
+    if len(payload.encode()) > 240_000:
+        raise HTTPException(413, "Project is too large")
+    if not isinstance(body.project.get("phases"), dict) or not isinstance(body.project.get("name"), str):
+        raise HTTPException(422, "Invalid project")
+    with closing(get_db()) as conn, conn:
+        conn.execute("INSERT INTO account_state(user_id,project) VALUES (?,?) "
+                     "ON CONFLICT(user_id) DO UPDATE SET project=excluded.project",
+                     [user["id"], payload])
+    return {"ok": True}
+
+
+@app.post("/api/auth/delete-account")
+def delete_account(body: DeleteAccountBody, request: Request,
+                   authorization: str | None = Header(default=None)):
+    enforce_rate_limit("auth_delete", request)
+    user = current_user(authorization)
+    if body.confirmation != "DELETE":
+        raise HTTPException(400, "Type DELETE to confirm")
+    if not bcrypt.checkpw(body.current_password.encode(), user["password_hash"].encode()):
+        raise HTTPException(403, "Current password is incorrect")
+    with closing(get_db()) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for table in ("saved_deals", "comps_history", "password_reset_codes", "account_state", "guide_purchases"):
+            conn.execute(f"DELETE FROM {table} WHERE user_id=?", [user["id"]])
+        # Keep transaction identifiers for disputes/refunds, without an active account.
+        conn.execute("UPDATE checkout_sessions SET status='account_deleted' "
+                     "WHERE user_id=? AND status!='completed'", [user["id"]])
+        if user["email"] == OWNER_EMAIL:
+            conn.execute("INSERT OR IGNORE INTO seed_suppression(role) VALUES ('owner')")
+        if user["email"] == AFFILIATE_ADMIN_EMAIL:
+            conn.execute("INSERT OR IGNORE INTO seed_suppression(role) VALUES ('affiliate_admin')")
+        linked = conn.execute("SELECT id FROM affiliates WHERE lower(email)=?", [user["email"]]).fetchall()
+        for affiliate in linked:
+            aid = affiliate["id"]
+            conn.execute("DELETE FROM affiliate_clicks WHERE affiliate_id=?", [aid])
+            conn.execute("UPDATE affiliates SET name='Deleted affiliate',handle='',email=NULL,"
+                         "password_hash=NULL,active=0,is_admin=0,slug=? WHERE id=?",
+                         ["deleted-" + uuid.uuid4().hex, aid])
+        conn.execute("DELETE FROM users WHERE id=?", [user["id"]])
+    return {"ok": True, "message": "Account deleted. Required financial records are retained as explained in the privacy policy."}
 
 @app.get("/api/deals")
 def list_deals(authorization: str | None = Header(default=None)):
@@ -1155,6 +1265,13 @@ def fulfill_checkout_session(session: dict) -> dict:
         ).fetchone()
         if not pending or pending["status"] == "completed":
             return {"received": True, "fulfilled": False}
+        if pending["status"] == "account_deleted":
+            # Session remains available for accounting reconciliation; never recreate
+            # a deleted account, entitlement or referral from a late provider event.
+            import logging
+            logging.getLogger("trulife.payments").warning(
+                "Payment for deleted account requires reconciliation: %s", session_id)
+            return {"received": True, "fulfilled": False, "reconciliation_required": True}
         buyer = conn.execute("SELECT * FROM users WHERE id=?", [pending["user_id"]]).fetchone()
         guide = next((g for g in GUIDE_CATALOG if g["id"] == pending["guide_id"]), None)
         if not buyer or not guide:

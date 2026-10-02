@@ -22,7 +22,8 @@ class ReferralTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(api.app)
         for table in ("affiliate_sales", "purchase_ledger", "payment_refunds", "guide_purchases",
-                      "checkout_sessions", "users", "affiliates"):
+                      "checkout_sessions", "account_state", "seed_suppression",
+                      "saved_deals", "comps_history", "password_reset_codes", "users", "affiliates"):
             api.db.execute("DELETE FROM " + table)
         for slug, email, admin in (("alice", "alice@example.test", 0), ("bob", "bob@example.test", 0),
                                    ("admin", "admin@example.test", 1)):
@@ -186,6 +187,76 @@ class ReferralTests(unittest.TestCase):
         tracking.migrate(api.db)
         tracking.migrate(api.db)
         self.assertEqual(api.db.execute("SELECT COUNT(*) FROM affiliate_sales").fetchone()[0], 1)
+
+    def test_account_state_isolation_and_validation(self):
+        a = self.buyer()
+        b = self.buyer("second@example.test", "bob")
+        ah = {"Authorization": "Bearer " + api.make_token(a["id"])}
+        bh = {"Authorization": "Bearer " + api.make_token(b["id"])}
+        self.assertEqual(self.client.get("/api/account/state").status_code, 401)
+        self.assertEqual(self.client.get("/api/account/state", headers=self.ah).status_code, 401)
+        self.assertEqual(self.client.put("/api/account/preferences", headers=ah,
+                                        json={"market": "Orlando, FL", "mao": 0.72}).status_code, 200)
+        project = {"name": "Alice project", "phases": {}}
+        self.assertEqual(self.client.put("/api/account/project", headers=ah,
+                                        json={"project": project}).status_code, 200)
+        state = self.client.get("/api/account/state", headers=ah).json()
+        self.assertEqual(state["project"], project)
+        self.assertEqual(state["preferences"]["market"], "Orlando, FL")
+        self.assertEqual(self.client.get("/api/account/state", headers=bh).json(),
+                         {"preferences": {}, "project": None})
+        self.assertEqual(self.client.put("/api/account/preferences", headers=ah,
+                                        json={"mao": 10}).status_code, 422)
+        self.assertEqual(self.client.put("/api/account/project", headers=ah,
+                                        json={"project": {"name": "broken"}}).status_code, 422)
+
+    def test_account_deletion_reauth_erasure_and_financial_retention(self):
+        a = self.buyer()
+        b = self.buyer("second@example.test", "bob")
+        ah = {"Authorization": "Bearer " + api.make_token(a["id"])}
+        self.fulfill(self.checkout(a))
+        late = self.checkout(a, "cs_late")
+        api.db.execute("INSERT INTO saved_deals(user_id,deal_type,payload) VALUES (?,'flip','{}')", [a["id"]])
+        api.db.execute("INSERT INTO comps_history(user_id,payload) VALUES (?,'{}')", [a["id"]])
+        api.db.execute("INSERT INTO account_state(user_id) VALUES (?)", [a["id"]])
+        api.db.commit()
+        body = {"current_password": "wrong", "confirmation": "DELETE"}
+        self.assertEqual(self.client.post("/api/auth/delete-account", headers=ah, json=body).status_code, 403)
+        body["current_password"] = "OnlyATest123!"
+        body["confirmation"] = "NO"
+        self.assertEqual(self.client.post("/api/auth/delete-account", headers=ah, json=body).status_code, 400)
+        body["confirmation"] = "DELETE"
+        self.assertEqual(self.client.post("/api/auth/delete-account", headers=ah, json=body).status_code, 200)
+        self.assertEqual(self.client.get("/api/auth/me", headers=ah).status_code, 401)
+        for table in ("saved_deals", "comps_history", "guide_purchases", "account_state"):
+            self.assertEqual(api.db.execute(f"SELECT COUNT(*) FROM {table} WHERE user_id=?", [a["id"]]).fetchone()[0], 0)
+        self.assertIsNotNone(api.db.execute("SELECT 1 FROM users WHERE id=?", [b["id"]]).fetchone())
+        self.assertEqual(api.db.execute("SELECT COUNT(*) FROM purchase_ledger").fetchone()[0], 1)
+        self.assertTrue(self.fulfill(late)[0]["reconciliation_required"])
+        self.assertEqual(self.client.get("/api/affiliate/clients", headers=self.ah).json(), [])
+        self.assertEqual(self.signup().status_code, 201)
+        self.assertEqual(self.client.get("/api/auth/me", headers=ah).status_code, 401)
+
+    def test_deletion_disables_linked_affiliate_and_prevents_owner_reseed(self):
+        with patch.object(api, "OWNER_EMAIL", "alice@example.test"), patch.object(api, "AFFILIATE_ADMIN_EMAIL", "alice@example.test"):
+            user = self.buyer("alice@example.test", "")
+            uh = {"Authorization": "Bearer " + api.make_token(user["id"])}
+            response = self.client.post("/api/auth/delete-account", headers=uh,
+                                        json={"current_password": "OnlyATest123!", "confirmation": "DELETE"})
+            self.assertEqual(response.status_code, 200)
+            api.seed_owner_account()
+            api.seed_affiliates()
+            self.assertIsNone(api.db.execute("SELECT 1 FROM users WHERE email='alice@example.test'").fetchone())
+            self.assertEqual(self.client.get("/api/affiliate/overview", headers=self.ah).status_code, 401)
+            deleted = api.db.execute("SELECT * FROM affiliates WHERE id=?", [self.a["id"]]).fetchone()
+            self.assertIsNone(deleted["email"])
+            self.assertEqual(deleted["active"], 0)
+
+    def test_public_deletion_page(self):
+        response = self.client.get("/delete-account.html")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Delete your account", response.text)
+        self.assertIn("info@trulifeproperties.com", response.text)
 
     def test_signed_webhook_purchase_and_refund(self):
         session = self.checkout(self.buyer())

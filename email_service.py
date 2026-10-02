@@ -43,6 +43,7 @@ def send_email(to: str, subject: str, html: str) -> bool:
         return False
     body = json.dumps({
         "from": EMAIL_FROM,
+        "reply_to": os.environ.get("TRULIFE_EMAIL_REPLY_TO", "info@trulifeproperties.com"),
         "to": [to],
         "subject": subject,
         "html": html,

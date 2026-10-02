@@ -1351,7 +1351,8 @@ body {
 }
 .fsh-name:focus { border-bottom-color: var(--gold); }
 .fsh-meta { display: flex; gap: 12px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
-.fsh-right { display: flex; gap: 10px; }
+.fsh-right { display: flex; gap: 10px; flex-wrap: wrap; max-width: 360px; }
+#fs-save-status { flex-basis: 100%; }
 
 .fs-toolbar {
   display: flex;
@@ -2697,7 +2698,8 @@ body {
       <div class="page-head">
         <div class="crumb" id="dash-welcome-crumb">Welcome Back</div>
         <h1>Operator <em>Dashboard</em></h1>
-        <p>Snapshot of your pipeline, courses, and what's worth chasing today.</p>
+        <p>Explore the tools and courses. Dashboard charts and figures below are illustrative examples, not your account's live performance. Open Saved Deals for your own records.</p>
+        <span class="tag">Example dashboard</span>
       </div>
 
       <div class="grid grid-4 mb-3">
@@ -3525,6 +3527,8 @@ body {
         </div>
         <div class="fsh-right">
           <button class="btn btn-navy btn-sm" id="fs-add-project">+ Add Project</button>
+          <button class="btn btn-gold btn-sm" id="fs-save-project">Save Project</button>
+          <span id="fs-save-status" role="status" style="font-size:0.8rem;">Save your changes before leaving.</span>
         </div>
       </div>
 
@@ -7882,15 +7886,17 @@ body {
         <div class="card">
           <h3>Investment Defaults</h3>
           <div class="field-row">
-            <div class="field"><label>Min Cash-on-Cash %</label><input type="number" value="15" /></div>
-            <div class="field"><label>Min Profit per Flip</label><input type="text" value="$30,000" /></div>
+            <div class="field"><label for="set-min-coc">Min Cash-on-Cash %</label><input id="set-min-coc" type="number" value="15" min="0" /></div>
+            <div class="field"><label for="set-min-profit">Min Profit per Flip</label><input id="set-min-profit" type="number" value="30000" min="0" /></div>
           </div>
           <div class="field-row">
-            <div class="field"><label>Default Rate %</label><input type="number" value="9.5" step="0.1" /></div>
-            <div class="field"><label>Default Refi LTV %</label><input type="number" value="75" step="0.1" /></div>
+            <div class="field"><label for="set-rate">Default Rate %</label><input id="set-rate" type="number" value="9.5" min="0" max="100" step="0.1" /></div>
+            <div class="field"><label for="set-refi-ltv">Default Refi LTV %</label><input id="set-refi-ltv" type="number" value="75" min="0" max="100" step="0.1" /></div>
           </div>
-          <div class="field"><label>MAO Multiplier</label><input type="number" value="0.7" step="0.01" /></div>
-          <button class="btn btn-gold mt-3">Save Defaults</button>
+          <div class="field"><label for="set-mao">MAO Multiplier</label><input id="set-mao" type="number" value="0.7" min="0" max="1" step="0.01" /></div>
+          <p style="font-size:0.8rem;">Saved reference targets for your account. They do not overwrite values in an existing deal or calculator.</p>
+          <div id="set-defaults-msg" role="status" style="font-size:0.82rem;"></div>
+          <button class="btn btn-gold mt-3" id="set-save-defaults">Save Defaults</button>
         </div>
 
         <div class="card">
@@ -7908,7 +7914,16 @@ body {
           <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
             <a href="/privacy-policy.html" target="_blank" rel="noopener" style="color:var(--navy); font-weight:600; text-decoration:none;">Privacy Policy &rarr;</a>
             <a href="/terms-of-service.html" target="_blank" rel="noopener" style="color:var(--navy); font-weight:600; text-decoration:none;">Terms of Service &rarr;</a>
+            <a href="/delete-account.html" target="_blank" rel="noopener">Account deletion information &rarr;</a>
           </div>
+        </div>
+        <div class="card">
+          <h3>Delete Account</h3>
+          <p style="font-size:0.85rem;">Permanently delete your login, profile, saved deals, comps history, saved project, preferences and guide access. Any affiliate login using the same email is disabled and anonymized. Required transaction, commission and payout records are retained for accounting, disputes and legal obligations. This does not issue refunds or cancel subscriptions held with another provider.</p>
+          <div class="field"><label for="set-delete-password">Current password</label><input type="password" id="set-delete-password" autocomplete="current-password" /></div>
+          <div class="field"><label for="set-delete-confirm">Type DELETE to confirm</label><input id="set-delete-confirm" autocomplete="off" /></div>
+          <p id="set-delete-msg" role="status" style="font-size:0.85rem;"></p>
+          <button class="btn btn-navy" id="set-delete-account">Permanently Delete My Account</button>
         </div>
       </div>
     </section>
@@ -7979,9 +7994,11 @@ async function authFetch(path, opts) {
   if (opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   const res = await fetch(API + path, Object.assign({}, opts, { headers }));
   if (res.status === 401) {
+    if (getAuthToken() !== token) throw new Error('Previous account session ended');
     const wasLoggedIn = !!currentUser;
     setAuthToken(null);
     currentUser = null;
+    clearAccountWorkspace();
     // Only force the login gate open for a real session drop. Guests calling
     // an account-only endpoint in the background (e.g. saved-deals history on
     // a free screen) should fail quietly — gating happens at nav time instead.
@@ -8041,6 +8058,7 @@ function hideAuthGate() {
 }
 
 function applyUserToChrome(user) {
+  if (currentUser?.id !== user.id) clearAccountWorkspace();
   currentUser = user;
   const nameEl = document.querySelector('.sidebar-footer .user-meta .name');
   const avatarEl = document.querySelector('.sidebar-footer .avatar');
@@ -8762,6 +8780,7 @@ function resetChromeToGuest() {
 function logout() {
   setAuthToken(null);
   currentUser = null;
+  clearAccountWorkspace();
   _pendingScreen = null;
   resetChromeToGuest();
   hideAuthGate();
@@ -8778,8 +8797,8 @@ async function onAuthReady() {
   }
 }
 function onceAuthed(fn) {
+  _authReadyQueue.push(fn);
   if (currentUser) fn();
-  else _authReadyQueue.push(fn);
 }
 
 bootstrapAuth();
@@ -9554,14 +9573,16 @@ async function fetchLiveComps() {
       _compsDataSource = 'sample';
     }
   } catch (_) {
-    // Live data unavailable — keep whatever compsData currently holds
-    // (sample data on first load, or the last successful live pull).
+    // Never label an earlier address's results as a fresh live lookup.
+    _compsDataSource = 'unavailable';
   } finally {
     _compsFetchInFlight = false;
     if (btn) { btn.disabled = false; btn.textContent = originalLabel; }
     const badge = document.getElementById('comps-source-badge');
     if (badge) {
-      badge.textContent = _compsDataSource === 'rentcast' ? 'Live · RentCast' : 'Sample data';
+      badge.textContent = _compsDataSource === 'rentcast' ? 'Live · RentCast' :
+        _compsDataSource === 'unavailable' ? 'Lookup failed: prior/example results, not verified for this address' :
+        'No live results: example/prior data, not verified for this address';
       badge.className = 'tag ' + (_compsDataSource === 'rentcast' ? 'tag-gold' : '');
     }
   }
@@ -9900,7 +9921,23 @@ const FS_TEMPLATE = [
 ];
 
 // In-memory project state (single project at a time per the user's spec)
-let fsProject = null;
+var fsProject = null;
+var accountStateLoaded = false;
+var accountStateError = false;
+var accountStateGeneration = 0;
+
+function clearAccountWorkspace() {
+  accountStateGeneration = (accountStateGeneration || 0) + 1;
+  accountStateLoaded = false;
+  accountStateError = false;
+  fsProject = null;
+  ['fs-plan-phases', 'fs-actual-phases', 'fs-sched-body'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.replaceChildren();
+  });
+  document.querySelectorAll('#screen-settings input').forEach(el => { el.value = ''; });
+  document.querySelectorAll('#screen-settings [role="status"]').forEach(el => { el.textContent = ''; });
+}
 
 // Adds `days` calendar days to an ISO date string ('YYYY-MM-DD'); returns '' if start is blank.
 function addDaysISO(startISO, days) {
@@ -9943,6 +9980,17 @@ function freshProjectState() {
   state.softs = { designer: 0, staging: 0 };
   state.optIn = { contingency: false, gc: false, designer: false, staging: false };
   return state;
+}
+
+// Only restore the schema the UI knows. Numeric fields cannot inject markup.
+function normalizeProjectState(template, saved) {
+  if (Array.isArray(template)) return template.map((value, i) => normalizeProjectState(value, saved?.[i]));
+  if (template && typeof template === 'object') return Object.fromEntries(
+    Object.entries(template).map(([key, value]) => [key, normalizeProjectState(value, saved?.[key])]));
+  if (saved === undefined || saved === null) return template;
+  if (typeof template === 'number') return Number.isFinite(Number(saved)) ? Number(saved) : template;
+  if (typeof template === 'boolean') return saved === true;
+  return String(saved).slice(0, 2000);
 }
 
 function initFiveStep() {
@@ -10010,6 +10058,7 @@ function renderFsPlan() {
   // Bind designer/staging amount inputs
   ['fs-plan-designer','fs-plan-staging'].forEach(id => {
     const el = document.getElementById(id);
+    if (el) el.value = fsProject.softs[id === 'fs-plan-designer' ? 'designer' : 'staging'] || 0;
     if (el && !el.dataset.bound) {
       el.dataset.bound = '1';
       el.addEventListener('input', () => {
@@ -10029,6 +10078,11 @@ function renderFsPlan() {
   };
   Object.keys(optMap).forEach(id => {
     const el = document.getElementById(id);
+    if (el) {
+      el.checked = !!fsProject.optIn[optMap[id]];
+      const amount = document.getElementById('fs-plan-' + optMap[id]);
+      if (amount) amount.disabled = !el.checked;
+    }
     if (el && !el.dataset.bound) {
       el.dataset.bound = '1';
       el.checked = !!fsProject.optIn[optMap[id]];
@@ -10214,8 +10268,8 @@ function renderFsSchedule() {
         <td class="fs-readout" title="Derived from Project Start + prior phase durations">${d.plannedStart || '&mdash;'}</td>
         <td><input class="fs-cell fs-narrow" data-field="plannedDuration" type="number" min="0" value="${s.plannedDuration||0}" /> <span class="text-muted" style="font-size:0.72rem;">days</span></td>
         <td class="fs-readout">${d.plannedEnd || '&mdash;'}</td>
-        <td><input class="fs-cell fs-narrow" data-field="actualStart" type="date" value="${s.actualStart||''}" /></td>
-        <td><input class="fs-cell fs-narrow" data-field="actualEnd" type="date" value="${s.actualEnd||''}" /></td>
+        <td><input class="fs-cell fs-narrow" data-field="actualStart" type="date" value="${escapeAttr(s.actualStart||'')}" /></td>
+        <td><input class="fs-cell fs-narrow" data-field="actualEnd" type="date" value="${escapeAttr(s.actualEnd||'')}" /></td>
         <td class="fs-var-cell">${fmtVar(d.startVar)}</td>
         <td class="fs-var-cell">${fmtVar(d.endVar)}</td>
         <td>
@@ -10362,11 +10416,36 @@ document.getElementById('fs-add-project').addEventListener('click', () => {
   renderFsActual();
   renderFsSchedule();
   switchFsTab('plan');
+  document.getElementById('fs-save-status').textContent = 'New project. Save to replace your stored project.';
 });
 
 // Persist project name edits
 document.getElementById('fs-project-name').addEventListener('input', e => {
   if (fsProject) fsProject.name = e.target.value;
+});
+
+document.getElementById('screen-five-step').addEventListener('input', () => {
+  document.getElementById('fs-save-status').textContent = 'Unsaved changes. Select Save Project.';
+});
+
+document.getElementById('fs-save-project').addEventListener('click', async () => {
+  const status = document.getElementById('fs-save-status');
+  const button = document.getElementById('fs-save-project');
+  if (!currentUser) { showAuthGate('login', 'five-step'); return; }
+  if (!accountStateLoaded || accountStateError) {
+    status.textContent = 'Stored project not loaded. Reload before saving to avoid overwriting it.';
+    return;
+  }
+  if (!fsProject) return;
+  const generation = accountStateGeneration;
+  button.disabled = true;
+  try {
+    const res = await authFetch('/api/account/project', {method: 'PUT', body: JSON.stringify({project: fsProject})});
+    if (!res.ok) throw new Error('Could not save. Your changes remain in this tab; try again.');
+    if (generation === accountStateGeneration) status.textContent = 'Project saved to your account.';
+  } catch (err) {
+    if (generation === accountStateGeneration) status.textContent = err.message;
+  } finally { button.disabled = false; }
 });
 
 // Comps filter chips (visual only)
@@ -11412,12 +11491,85 @@ function loadProfileIntoSettings() {
 }
 onceAuthed(loadProfileIntoSettings);
 
+const preferenceFields = {market: 'set-market', min_coc: 'set-min-coc', min_profit: 'set-min-profit',
+  rate: 'set-rate', refi_ltv: 'set-refi-ltv', mao: 'set-mao'};
+const preferenceDefaults = {market: '', min_coc: 15, min_profit: 30000, rate: 9.5, refi_ltv: 75, mao: 0.7};
+async function loadAccountWorkspace() {
+  if (!currentUser) return;
+  const generation = accountStateGeneration;
+  const uid = currentUser.id;
+  try {
+    const res = await authFetch('/api/account/state');
+    if (!res.ok) throw new Error('Could not load your saved settings or project.');
+    const state = await res.json();
+    if (generation !== accountStateGeneration || currentUser?.id !== uid) return;
+    for (const [key, id] of Object.entries(preferenceFields))
+      document.getElementById(id).value = state.preferences[key] ?? preferenceDefaults[key];
+    fsProject = freshProjectState();
+    if (state.project) {
+      fsProject = normalizeProjectState(fsProject, state.project);
+    }
+    renderFsPlan(); renderFsActual(); renderFsSchedule();
+    document.getElementById('fs-project-name').value = fsProject.name;
+    document.getElementById('fs-save-status').textContent = state.project ? 'Saved project loaded.' : 'New project. Save changes to your account.';
+    accountStateLoaded = true; accountStateError = false;
+  } catch (err) {
+    if (generation !== accountStateGeneration) return;
+    accountStateError = true;
+    document.getElementById('fs-save-status').textContent = err.message + ' Reload before saving.';
+    document.getElementById('set-defaults-msg').textContent = err.message;
+  }
+}
+onceAuthed(loadAccountWorkspace);
+
+async function saveAccountPreferences() {
+  if (!accountStateLoaded || accountStateError) throw new Error('Reload to load your stored preferences before saving.');
+  const preferences = {};
+  for (const [key, id] of Object.entries(preferenceFields)) {
+    const field = document.getElementById(id);
+    if (!field.checkValidity() || (key !== 'market' && field.value === '')) throw new Error('Enter valid values for every investment target.');
+    preferences[key] = key === 'market' ? field.value.trim() : Number(field.value);
+  }
+  const res = await authFetch('/api/account/preferences', {method: 'PUT', body: JSON.stringify(preferences)});
+  if (!res.ok) throw new Error('Could not save your preferences.');
+}
+document.getElementById('set-save-defaults').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const generation = accountStateGeneration;
+  button.disabled = true;
+  try {
+    await saveAccountPreferences();
+    if (generation === accountStateGeneration) document.getElementById('set-defaults-msg').textContent = 'Reference targets saved to your account.';
+  } catch (err) {
+    if (generation === accountStateGeneration) document.getElementById('set-defaults-msg').textContent = err.message;
+  } finally { button.disabled = false; }
+});
+document.getElementById('set-delete-account').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  const msg = document.getElementById('set-delete-msg');
+  const current_password = document.getElementById('set-delete-password').value;
+  const confirmation = document.getElementById('set-delete-confirm').value;
+  if (!current_password || confirmation !== 'DELETE') { msg.textContent = 'Enter your current password and type DELETE.'; return; }
+  if (!confirm('Permanently delete your Tru Life account and associated app data? This cannot be undone.')) return;
+  button.disabled = true;
+  try {
+    const res = await authFetch('/api/auth/delete-account', {method: 'POST', body: JSON.stringify({current_password, confirmation})});
+    const data = await res.json();
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not delete account.');
+    affiliateLogout();
+    logout();
+    alert('Your account and associated app data have been deleted. Required financial records are retained as described in the privacy policy.');
+  } catch (err) { msg.textContent = err.message; }
+  finally { button.disabled = false; }
+});
+
 const saveProfileBtn = document.getElementById('set-save-profile-btn');
 if (saveProfileBtn) {
   saveProfileBtn.addEventListener('click', async () => {
     const msg = document.getElementById('set-profile-msg');
     const name = document.getElementById('set-name').value.trim();
     const phone = document.getElementById('set-phone').value.trim();
+    const generation = accountStateGeneration;
     saveProfileBtn.disabled = true;
     const prevLabel = saveProfileBtn.textContent;
     saveProfileBtn.textContent = 'Saving\u2026';
@@ -11428,7 +11580,10 @@ if (saveProfileBtn) {
       });
       if (!res.ok) throw new Error('Could not save your profile.');
       const data = await res.json();
+      if (generation !== accountStateGeneration) return;
       applyUserToChrome(data.user);
+      try { await saveAccountPreferences(); }
+      catch (_) { throw new Error('Name and phone saved, but market/preferences were not saved. Reload and try again.'); }
       if (msg) {
         msg.textContent = 'Profile saved.';
         msg.style.color = 'var(--gold)';
@@ -11673,6 +11828,10 @@ async function renderCompsHistory() {
   } catch (_) { /* leave history hidden on failure */ }
 }
 onceAuthed(renderCompsHistory);
+if (new URLSearchParams(window.location.search).get('account') === 'delete') {
+  // Navigation is auth-gated and resumes at Settings after login.
+  setTimeout(() => go('settings'), 0);
+}
 </script>
 
 </body>
