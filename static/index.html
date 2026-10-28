@@ -151,6 +151,42 @@ em { font-style: italic; color: var(--gold); }
   .bbb-brand-head .bbb-brand-logo { max-width: 260px; }
 }
 
+/* Brick by Brick course player */
+.bbb-track { padding: 24px; }
+.bbb-track-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 20px; }
+.bbb-track-head h3 { font-size: 1.5rem; color: var(--navy); margin: 2px 0 6px; }
+.bbb-track-head p { font-size: 0.9rem; margin: 0; }
+.bbb-track-progress { min-width: 240px; flex: 0 0 260px; }
+.bbb-track-progress .progress-meta { margin-bottom: 0; }
+.bbb-player-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 960px) { .bbb-player-grid { grid-template-columns: 1fr; } .bbb-track-progress { flex: 1 1 100%; } }
+.bbb-player-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #0a1340; border-radius: 14px; overflow: hidden; box-shadow: 0 14px 36px rgba(3,17,88,0.25); }
+.bbb-player-wrap video { width: 100%; height: 100%; display: block; background: #0a1340; }
+.bbb-now-playing { padding: 18px 4px 0; }
+.bbb-np-eyebrow { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); font-weight: 700; margin-bottom: 6px; }
+.bbb-now-playing h4 { font-size: 1.3rem; color: var(--navy); margin: 0 0 8px; line-height: 1.25; }
+.bbb-now-playing p { font-size: 0.92rem; margin: 0 0 14px; }
+.bbb-np-actions { align-items: center; flex-wrap: wrap; gap: 10px; }
+.bbb-np-note { font-size: 0.82rem; }
+.bbb-playlist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.bbb-module { display: grid; grid-template-columns: 112px 1fr; gap: 14px; align-items: center; width: 100%; text-align: left; background: var(--white); border: 1px solid var(--gray); border-radius: 12px; padding: 10px; cursor: pointer; font-family: var(--sans); transition: border-color .15s, box-shadow .15s, transform .15s; }
+.bbb-module:hover { border-color: var(--gold); box-shadow: var(--shadow-sm, 0 4px 12px rgba(3,17,88,0.08)); transform: translateY(-1px); }
+.bbb-module.active { border-color: var(--gold); background: linear-gradient(135deg, rgba(218,166,31,0.08), rgba(255,255,255,1)); }
+.bbb-module-thumb { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: var(--navy); }
+.bbb-module-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bbb-module-thumb .bbb-dur { position: absolute; right: 6px; bottom: 6px; background: rgba(3,17,88,0.85); color: var(--white); font-size: 0.68rem; font-weight: 600; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.04em; }
+.bbb-module-thumb .bbb-play { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--white); opacity: 0.9; }
+.bbb-module.active .bbb-module-thumb .bbb-play { color: var(--gold-light); }
+.bbb-module-body { min-width: 0; }
+.bbb-module-step { font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.bbb-module-step .bbb-done { display: none; color: #1f7a3d; letter-spacing: 0.04em; }
+.bbb-module.complete .bbb-module-step .bbb-done { display: inline-flex; align-items: center; gap: 3px; }
+.bbb-module-title { font-weight: 600; color: var(--navy); font-size: 0.95rem; line-height: 1.3; margin: 3px 0 2px; }
+.bbb-module-sub { font-size: 0.8rem; color: var(--charcoal); line-height: 1.35; }
+.bbb-upcoming .course-img { filter: saturate(0.6); }
+.bbb-soon-badge { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.92); color: var(--navy); padding: 8px 16px; border-radius: 999px; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; z-index: 2; }
+@media (max-width: 640px) { .bbb-track { padding: 16px; } .bbb-module { grid-template-columns: 96px 1fr; } .bbb-now-playing h4 { font-size: 1.12rem; } }
+
 /* Brick by Brick emblem on dashboard course card */
 .course-card .course-card-logo {
   display: flex;
@@ -2886,10 +2922,10 @@ body {
           <span class="course-tag">Course 01</span>
           <div class="course-card-logo"><img src="brick-by-brick-emblem.png" alt="Brick by Brick emblem" /></div>
           <h3>Brick by Brick</h3>
-          <p class="text-muted" style="font-size: 0.86rem; margin: 6px 0 12px;">Course Empire · Foundations</p>
-          <div class="progress-track"><div class="progress-fill" style="width: 56%"></div></div>
-          <div class="progress-meta"><span>Level 2 · Ep 8</span><span>56%</span></div>
-          <a href="#" class="btn btn-navy btn-sm btn-block" data-go="brick">Resume Course</a>
+          <p class="text-muted" style="font-size: 0.86rem; margin: 6px 0 12px;">Level 01 · Fix &amp; Flip Foundations</p>
+          <div class="progress-track"><div class="progress-fill" id="dash-bbb-fill" style="width: 0%"></div></div>
+          <div class="progress-meta"><span id="dash-bbb-label">3 modules live</span><span id="dash-bbb-pct">0%</span></div>
+          <a href="#" class="btn btn-navy btn-sm btn-block" data-go="brick" id="dash-bbb-cta">Start Course</a>
         </div>
         <div class="card course-card">
           <span class="course-tag">Course 02</span>
@@ -3904,55 +3940,66 @@ body {
         <p>Three-level real estate ladder. Real deals, real strategy, taught by active operators.</p>
       </div>
 
-      <div class="course-grid">
-        <div class="course-card">
-          <div class="course-img"><span class="level">Level 01</span>
-            <div class="play-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
-          </div>
-          <div class="course-body">
+      <!-- ===== LEVEL 01 · FIX & FLIP FOUNDATIONS (live) ===== -->
+      <div class="card bbb-track" id="bbb-track-fixflip">
+        <div class="bbb-track-head">
+          <div>
+            <span class="course-tag">Level 01 · Now Streaming</span>
             <h3>Fix &amp; Flip Foundations</h3>
-            <div class="course-meta"><span>12 episodes</span><span>~4 hours</span></div>
-            <div class="progress-track"><div class="progress-fill" style="width: 100%"></div></div>
-            <div class="progress-meta"><span>Completed</span><span>12/12</span></div>
-            <button class="btn btn-outline btn-sm btn-block">Review Course</button>
+            <p class="text-muted">The first three modules are live. New modules are added as Justin releases them.</p>
+          </div>
+          <div class="bbb-track-progress">
+            <div class="progress-track"><div class="progress-fill" id="bbb-ff-progress-fill" style="width: 0%"></div></div>
+            <div class="progress-meta"><span id="bbb-ff-progress-label">0 of 3 complete</span><span id="bbb-ff-progress-pct">0%</span></div>
           </div>
         </div>
 
-        <div class="course-card">
-          <div class="course-img"><span class="level">Level 02</span>
-            <div class="play-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
+        <div class="bbb-player-grid">
+          <div class="bbb-player-col">
+            <div class="bbb-player-wrap">
+              <video id="bbb-player" controls playsinline preload="metadata" controlslist="nodownload" poster="brick/fixflip/module-1-poster.jpg">
+                <source src="brick/fixflip/module-1.mp4" type="video/mp4" />
+                Your browser doesn&rsquo;t support embedded video.
+              </video>
+            </div>
+            <div class="bbb-now-playing">
+              <div class="bbb-np-eyebrow" id="bbb-np-eyebrow">Module 1 · 1:53</div>
+              <h4 id="bbb-np-title">Welcome to Fix &amp; Flip Foundations</h4>
+              <p class="text-muted" id="bbb-np-desc"></p>
+              <div class="flex-row bbb-np-actions">
+                <button class="btn btn-gold btn-sm" id="bbb-mark-complete">Mark Complete</button>
+                <button class="btn btn-outline btn-sm" id="bbb-next-module">Next Module &rarr;</button>
+                <span class="text-muted bbb-np-note" id="bbb-np-note"></span>
+              </div>
+            </div>
           </div>
-          <div class="course-body">
-            <h3>Buy &amp; Hold Mastery</h3>
-            <div class="course-meta"><span>14 episodes</span><span>~6 hours</span></div>
-            <div class="progress-track"><div class="progress-fill" style="width: 56%"></div></div>
-            <div class="progress-meta"><span>In Progress · Ep. 8</span><span>56%</span></div>
-            <button class="btn btn-gold btn-sm btn-block">Continue</button>
-          </div>
-        </div>
-
-        <div class="course-card">
-          <div class="course-img"><span class="level">Level 03</span>
-            <div class="play-btn"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
-          </div>
-          <div class="course-body">
-            <h3>Build to Profit</h3>
-            <div class="course-meta"><span>16 episodes</span><span>~10 hours</span></div>
-            <div class="progress-track"><div class="progress-fill" style="width: 0%"></div></div>
-            <div class="progress-meta"><span>Locked · Unlock with Full Ladder</span><span>0%</span></div>
-            <button class="btn btn-navy btn-sm btn-block">Unlock Course</button>
-          </div>
+          <ol class="bbb-playlist" id="bbb-playlist" aria-label="Fix & Flip Foundations modules"></ol>
         </div>
       </div>
 
-      <div class="card mt-3">
-        <div class="card-head"><h3>Up Next · Level 2 · Episode 9</h3><span class="badge badge-gold">Episode 9</span></div>
-        <h4 style="font-size: 1.4rem; color: var(--navy); margin-bottom: 8px;">The BRRRR Refinance: How to Pull All Your Cash Out</h4>
-        <p class="text-muted" style="margin-bottom: 18px;">A full walkthrough of the refinance step — how to choose the right bank, what appraisers look for, and how to leave zero cash in the deal so you can recycle into the next one.</p>
-        <div class="flex-row">
-          <button class="btn btn-gold">▶ Watch Now</button>
-          <button class="btn btn-outline">Download Workbook</button>
-          <span class="text-muted" style="font-size: 0.86rem;">42 min · Includes BRRRR Refi Calculator</span>
+      <!-- ===== UPCOMING LEVELS ===== -->
+      <div class="course-grid mt-3">
+        <div class="course-card bbb-upcoming">
+          <div class="course-img"><span class="level">Level 02</span>
+            <div class="bbb-soon-badge">Coming Soon</div>
+          </div>
+          <div class="course-body">
+            <h3>Buy &amp; Hold Mastery</h3>
+            <div class="course-meta"><span>In production</span></div>
+            <p class="text-muted" style="font-size:0.88rem; margin: 0 0 14px;">Rentals, BRRRR, and building the portfolio once your flip engine is running.</p>
+            <button class="btn btn-outline btn-sm btn-block" disabled style="opacity:0.55;cursor:not-allowed">Not Yet Released</button>
+          </div>
+        </div>
+        <div class="course-card bbb-upcoming">
+          <div class="course-img"><span class="level">Level 03</span>
+            <div class="bbb-soon-badge">Coming Soon</div>
+          </div>
+          <div class="course-body">
+            <h3>Build to Profit</h3>
+            <div class="course-meta"><span>In production</span></div>
+            <p class="text-muted" style="font-size:0.88rem; margin: 0 0 14px;">Ground-up and heavy-value-add builds, taught from active Tru Life projects.</p>
+            <button class="btn btn-outline btn-sm btn-block" disabled style="opacity:0.55;cursor:not-allowed">Not Yet Released</button>
+          </div>
         </div>
       </div>
     </section>
@@ -11194,10 +11241,10 @@ onceAuthed(function () {
       title: 'The <em>course library</em> that teaches the system',
       lede: 'Brick by Brick is the long-form training that pairs with the app — every module ties back to a tool inside Tru Life.',
       steps: [
-        'Pick a track on the left to see its modules.',
-        'Each module includes the video, the worksheet, and the app shortcut to apply it.',
-        'Mark modules complete as you go to track progress.',
-        'Unlock the full library with a single one-time purchase.'
+        'Level 01 · Fix & Flip Foundations is streaming now — the first three modules are live.',
+        'Tap any module in the playlist to load it in the player.',
+        'Hit “Mark Complete” when you finish a module to track your progress.',
+        'Levels 02 and 03 unlock here as Justin releases them.'
       ],
       videoUrl: null
     },
@@ -11521,6 +11568,130 @@ async function loadAccountWorkspace() {
   }
 }
 onceAuthed(loadAccountWorkspace);
+
+/* ===== Brick by Brick · Fix & Flip Foundations player ===== */
+const BBB_MODULES = [
+  { n: 1, slug: 'module-1', dur: '1:53', title: 'Welcome to Fix & Flip Foundations',
+    sub: 'Meet the Tru Life team and the Brick by Brick mindset.',
+    desc: 'Your introduction to the Fix & Flip Foundations track — who we are, how we built our portfolio brick by brick, and why consistency is the first habit of every successful flipper.' },
+  { n: 2, slug: 'module-2', dur: '4:23', title: 'The 75% Rule, Timing & Design',
+    sub: 'Buy right: ARV math, carrying costs, timing, and design.',
+    desc: 'Two lessons: (01) The 75% Rule — why your all-in number has to land at 75% of ARV once carrying costs, realtor fees, and lender fees are counted, and (02) Timing & Design — how schedule and finish decisions protect your margin.' },
+  { n: 3, slug: 'module-3', dur: '3:46', title: 'Finding the Deal: Market, Zillow Method & Negotiation',
+    sub: 'Choose your market, source deals, and negotiate the price.',
+    desc: 'Three lessons: (01) Choosing Your Market, (02) The Zillow Method for analyzing the market and sourcing opportunities, and (03) The Negotiation Approach that gets the number to work.' }
+];
+const BBB_BASE = 'brick/fixflip/';
+let bbbCurrent = 1;
+function bbbStorageKey() { return 'trulife.bbb.progress.' + (currentUser && currentUser.id != null ? currentUser.id : 'guest'); }
+function bbbLoadProgress() {
+  try { const raw = localStorage.getItem(bbbStorageKey()); const data = raw ? JSON.parse(raw) : {}; return data && typeof data === 'object' ? data : {}; }
+  catch (e) { return {}; }
+}
+function bbbSaveProgress(data) { try { localStorage.setItem(bbbStorageKey(), JSON.stringify(data)); } catch (e) {} }
+function bbbIsComplete(n) { return !!bbbLoadProgress()[n]; }
+function bbbCompletedCount() { const p = bbbLoadProgress(); return BBB_MODULES.filter(m => p[m.n]).length; }
+function bbbNextIncomplete() { const p = bbbLoadProgress(); const next = BBB_MODULES.find(m => !p[m.n]); return next ? next.n : null; }
+
+function bbbRenderPlaylist() {
+  const list = document.getElementById('bbb-playlist');
+  if (!list) return;
+  list.innerHTML = BBB_MODULES.map(m => `
+    <li>
+      <button type="button" class="bbb-module${m.n === bbbCurrent ? ' active' : ''}${bbbIsComplete(m.n) ? ' complete' : ''}" data-bbb-module="${m.n}" aria-current="${m.n === bbbCurrent ? 'true' : 'false'}">
+        <div class="bbb-module-thumb">
+          <img src="${BBB_BASE}${m.slug}-poster.jpg" alt="" loading="lazy" />
+          <span class="bbb-play"><svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+          <span class="bbb-dur">${m.dur}</span>
+        </div>
+        <div class="bbb-module-body">
+          <div class="bbb-module-step">Module ${String(m.n).padStart(2, '0')} <span class="bbb-done">&#10003; Complete</span></div>
+          <div class="bbb-module-title">${m.title}</div>
+          <div class="bbb-module-sub">${m.sub}</div>
+        </div>
+      </button>
+    </li>`).join('');
+  list.querySelectorAll('[data-bbb-module]').forEach(btn => btn.addEventListener('click', () => bbbLoadModule(Number(btn.dataset.bbbModule), true)));
+}
+
+function bbbRenderProgress() {
+  const done = bbbCompletedCount(), total = BBB_MODULES.length;
+  const pct = Math.round((done / total) * 100);
+  const set = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
+  set('bbb-ff-progress-fill', el => el.style.width = pct + '%');
+  set('bbb-ff-progress-label', el => el.textContent = `${done} of ${total} complete`);
+  set('bbb-ff-progress-pct', el => el.textContent = pct + '%');
+  set('dash-bbb-fill', el => el.style.width = pct + '%');
+  set('dash-bbb-pct', el => el.textContent = pct + '%');
+  set('dash-bbb-label', el => el.textContent = done === 0 ? `${total} modules live` : (done === total ? 'Level 01 complete' : `Module ${done} of ${total} done`));
+  set('dash-bbb-cta', el => el.textContent = done === 0 ? 'Start Course' : (done === total ? 'Review Course' : 'Resume Course'));
+  const mark = document.getElementById('bbb-mark-complete');
+  if (mark) {
+    const complete = bbbIsComplete(bbbCurrent);
+    mark.textContent = complete ? '\u2713 Completed' : 'Mark Complete';
+    mark.classList.toggle('btn-gold', !complete);
+    mark.classList.toggle('btn-outline', complete);
+  }
+  const next = document.getElementById('bbb-next-module');
+  if (next) next.style.display = bbbCurrent < total ? '' : 'none';
+}
+
+function bbbLoadModule(n, autoplay) {
+  const m = BBB_MODULES.find(x => x.n === n);
+  const video = document.getElementById('bbb-player');
+  if (!m || !video) return;
+  bbbCurrent = n;
+  video.pause();
+  video.poster = BBB_BASE + m.slug + '-poster.jpg';
+  const src = video.querySelector('source');
+  if (src) src.src = BBB_BASE + m.slug + '.mp4'; else video.src = BBB_BASE + m.slug + '.mp4';
+  video.load();
+  if (autoplay) { const p = video.play(); if (p && p.catch) p.catch(() => {}); }
+  document.getElementById('bbb-np-eyebrow').textContent = `Module ${m.n} · ${m.dur}`;
+  document.getElementById('bbb-np-title').textContent = m.title;
+  document.getElementById('bbb-np-desc').textContent = m.desc;
+  document.getElementById('bbb-np-note').textContent = '';
+  bbbRenderPlaylist();
+  bbbRenderProgress();
+  if (autoplay) { const wrap = document.querySelector('.bbb-player-wrap'); if (wrap && window.innerWidth < 960) wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+}
+
+function bbbToggleComplete() {
+  const p = bbbLoadProgress();
+  if (p[bbbCurrent]) delete p[bbbCurrent]; else p[bbbCurrent] = Date.now();
+  bbbSaveProgress(p);
+  bbbRenderPlaylist();
+  bbbRenderProgress();
+  const note = document.getElementById('bbb-np-note');
+  if (note) note.textContent = p[bbbCurrent] ? (bbbCurrent < BBB_MODULES.length ? 'Saved. Up next: Module ' + (bbbCurrent + 1) + '.' : 'Saved. You\u2019ve finished every live module.') : 'Marked as not complete.';
+}
+
+(function initBrickByBrick() {
+  const video = document.getElementById('bbb-player');
+  if (!video) return;
+  document.getElementById('bbb-mark-complete').addEventListener('click', bbbToggleComplete);
+  document.getElementById('bbb-next-module').addEventListener('click', () => { if (bbbCurrent < BBB_MODULES.length) bbbLoadModule(bbbCurrent + 1, true); });
+  video.addEventListener('ended', () => {
+    const p = bbbLoadProgress();
+    if (!p[bbbCurrent]) { p[bbbCurrent] = Date.now(); bbbSaveProgress(p); }
+    bbbRenderPlaylist(); bbbRenderProgress();
+    const note = document.getElementById('bbb-np-note');
+    if (note) note.textContent = bbbCurrent < BBB_MODULES.length ? 'Module complete. Up next: Module ' + (bbbCurrent + 1) + '.' : 'Module complete. More modules are on the way.';
+  });
+  // Pause playback whenever the user leaves the Brick by Brick screen.
+  document.addEventListener('click', (e) => {
+    const nav = e.target.closest('[data-screen],[data-go]');
+    if (!nav) return;
+    const target = nav.dataset.screen || nav.dataset.go;
+    if (target && target !== 'brick' && !video.paused) video.pause();
+  }, true);
+  bbbLoadModule(1, false);
+})();
+onceAuthed(() => {
+  // Progress is stored per account on this device; re-render after sign-in so one user never sees another's progress.
+  bbbCurrent = bbbNextIncomplete() || 1;
+  bbbLoadModule(bbbCurrent, false);
+});
 
 async function saveAccountPreferences() {
   if (!accountStateLoaded || accountStateError) throw new Error('Reload to load your stored preferences before saving.');

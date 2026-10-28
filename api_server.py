@@ -463,6 +463,10 @@ if os.path.isdir(_STATIC_DIR):
     app.mount("/design", StaticFiles(directory=os.path.join(_STATIC_DIR, "design")), name="design-assets")
     if os.path.isdir(os.path.join(_STATIC_DIR, "assets")):
         app.mount("/assets", StaticFiles(directory=os.path.join(_STATIC_DIR, "assets")), name="assets")
+    # Brick by Brick course media (module videos + posters). StaticFiles honors
+    # HTTP Range requests, so the <video> player can seek without a full download.
+    if os.path.isdir(os.path.join(_STATIC_DIR, "brick")):
+        app.mount("/brick", StaticFiles(directory=os.path.join(_STATIC_DIR, "brick")), name="brick-course-media")
 
     _INDEX_HTML_PATH = os.path.join(_STATIC_DIR, "index.html")
 
