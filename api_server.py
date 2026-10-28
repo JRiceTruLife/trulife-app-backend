@@ -143,6 +143,13 @@ if STRIPE_ENABLED:
 # the frontend reads the query params to resume the right screen/guide.
 APP_BASE_URL = os.environ.get("TRULIFE_APP_BASE_URL", "").rstrip("/")
 
+# --- Paywall switch ---
+# Controls whether the frontend enforces purchase gates (design guides, 5 Step
+# Method, etc.). Off = review/free-access mode where every member sees all
+# content. Flip to "true" on Render (no code change) to start charging. Owner
+# accounts bypass every gate regardless of this flag.
+PAYWALL_ENABLED = os.environ.get("TRULIFE_PAYWALL_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
 # --- Transactional email (Resend) ---
 # TRULIFE_RESEND_API_KEY is required in production so password-reset codes
 # and purchase receipts actually go out. In dev, sends are logged and
@@ -789,6 +796,14 @@ def health():
     with closing(get_db()) as conn:
         conn.execute("SELECT 1 FROM users LIMIT 1").fetchone()
     return {"status": "ok"}
+
+@app.get("/api/config")
+def public_config():
+    """Non-secret runtime flags the frontend reads at boot."""
+    return {
+        "paywall_enabled": PAYWALL_ENABLED,
+        "payments_ready": STRIPE_ENABLED and bool(STRIPE_WEBHOOK_SECRET),
+    }
 
 @app.post("/api/auth/signup", status_code=201)
 def signup(body: SignupBody, request: Request):

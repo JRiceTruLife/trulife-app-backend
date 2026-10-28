@@ -8995,10 +8995,44 @@ document.querySelectorAll('[data-arc-back]').forEach(b => {
 });
 
 // ===== GLOBAL PAYWALL SWITCH =====
-// Flip to `true` when going live to re-enable the $49 / $497-$797 / architecture
-// unlock gates. While `false`, every paywalled guide, template, and 5-step page
-// is fully accessible to anyone opening the app — this is the review/preview mode.
-const PAYWALL_ENABLED = false;
+// Driven by the backend (`TRULIFE_PAYWALL_ENABLED` on Render → /api/config), so
+// going live is an environment change, not a code change. While off, every
+// paywalled guide, template, and 5-step page is accessible to any member — the
+// review/free-access mode. Owner accounts (Justin) bypass every gate either way.
+// Preview override: adding `?paywall=1` to the URL forces the gates ON for this
+// browser tab only (handy for reviewing the paid experience before launch). The
+// override can only turn gates on — never off.
+let PAYWALL_ENABLED = false;
+let PAYMENTS_READY = false;
+(function paywallPreviewOverride() {
+  try {
+    const q = new URLSearchParams(window.location.search).get('paywall');
+    if (q && /^(1|on|true)$/i.test(q)) sessionStorage.setItem('trulife.paywall.preview', '1');
+    if (q && /^(0|off|false)$/i.test(q)) sessionStorage.removeItem('trulife.paywall.preview');
+    if (sessionStorage.getItem('trulife.paywall.preview') === '1') PAYWALL_ENABLED = true;
+  } catch (_) {}
+})();
+function applyPaywallState() {
+  document.querySelectorAll('[id^="dz-detail-"]').forEach(detail => {
+    const name = detail.id.replace('dz-detail-', '');
+    if (detail.dataset.paywallReady === '1') detail.classList.toggle('dz-unlocked', tplIsUnlocked(name));
+  });
+  const fs = document.getElementById('screen-five-step');
+  if (fs && fs.dataset.paywallReady === '1') fs.classList.toggle('fs-unlocked', fsIsUnlocked());
+  document.body.classList.toggle('paywall-on', PAYWALL_ENABLED);
+}
+async function loadPaywallConfig() {
+  try {
+    const res = await fetch(API + '/api/config');
+    if (res.ok) {
+      const cfg = await res.json();
+      if (cfg.paywall_enabled) PAYWALL_ENABLED = true;
+      PAYMENTS_READY = !!cfg.payments_ready;
+    }
+  } catch (_) { /* offline — keep the safe default for this tab */ }
+  applyPaywallState();
+}
+loadPaywallConfig();
 
 // Architecture: Tier 1 purchase (reuses Design Guide paywall pattern)
 const ARC_LABELS = {
@@ -9017,18 +9051,14 @@ function arcUnlock(name) {
   const list = arcUnlockedList();
   if (list.indexOf(name) < 0) { list.push(name); localStorage.setItem('trulife.arc.unlocked', JSON.stringify(list)); }
 }
+// Concept Package pricing is not final yet, so the button routes to the real
+// inquiry form (same one Tier 2/3 use) instead of simulating a purchase. When
+// Justin sets prices, add the packages to GUIDE_CATALOG and switch this to the
+// Stripe checkout flow used by tplUnlock().
 document.querySelectorAll('[data-arc-buy]').forEach(btn => {
+  btn.textContent = 'Request Concept Package';
   btn.addEventListener('click', () => {
-    const name = btn.dataset.arcBuy;
-    const label = ARC_LABELS[name] || name;
-    if (arcIsUnlocked(name)) {
-      window.alert('You already have the ' + label + ' Concept Package unlocked. Download link will be available once final pricing & Stripe checkout are live.');
-      return;
-    }
-    const ok = window.confirm('Purchase the ' + label + ' Concept Package?\n\nPricing TBD — this simulates a successful purchase. Stripe checkout will be wired in the final launch step before going live.');
-    if (!ok) return;
-    arcUnlock(name);
-    window.alert(label + ' Concept Package unlocked. You\u2019ll get the PDF download link once the plans are finalized by the architect.');
+    openArcInquire(btn.dataset.arcBuy + '|Concept Package');
   });
 });
 
@@ -11061,7 +11091,7 @@ async function fsUnlock() {
 })();
 onceAuthed(function () {
   const screen = document.getElementById('screen-five-step');
-  if (screen && fsIsUnlocked()) screen.classList.add('fs-unlocked');
+  if (screen) screen.classList.toggle('fs-unlocked', fsIsUnlocked());
 });
 
 /* ========================================================================
