@@ -2207,6 +2207,27 @@ body {
   .cu-item { grid-template-columns: 1fr; gap: 4px; }
 }
 
+/* ===== BRICK BY BRICK PAYWALL ===== */
+.bbb-paywall-wrap { position: relative; }
+.bbb-locked { filter: blur(8px); pointer-events: none; user-select: none; transition: filter .25s ease; }
+.bbb-unlocked .bbb-locked { filter: none; pointer-events: auto; user-select: auto; }
+.bbb-paywall-wrap .fs-paywall { top: 36px; }
+.bbb-unlocked .bbb-paywall { display: none; }
+.bbb-paywall-eyebrow-logo { font-size: 0.66rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); font-weight: 700; margin-bottom: 8px; }
+
+/* ===== ARCHITECTURE COMING SOON ===== */
+.nav-soon { margin-left: auto; font-size: 0.56rem; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; background: var(--gold); color: var(--navy); border-radius: 999px; padding: 3px 8px; line-height: 1; }
+.arc-soon-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; background: var(--navy); color: var(--white); border-radius: 18px; padding: 26px 30px; margin-bottom: 22px; border: 1px solid rgba(218,166,31,0.45); box-shadow: 0 14px 36px rgba(3,17,88,0.18); }
+.arc-soon-banner .arc-soon-eyebrow { font-size: 0.66rem; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); font-weight: 700; margin-bottom: 8px; }
+.arc-soon-banner h3 { font-family: var(--serif); font-size: 1.55rem; margin: 0 0 8px; font-weight: 600; color: var(--white); }
+.arc-soon-banner h3 em { font-style: italic; color: var(--gold); }
+.arc-soon-banner p { margin: 0; color: rgba(255,255,255,0.82); font-size: 0.92rem; max-width: 640px; }
+.arc-soon-banner .arc-soon-actions { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 220px; }
+.arc-soon-banner .arc-soon-cta { padding: 14px 26px; background: var(--gold); color: var(--navy); border: none; border-radius: 10px; font-weight: 700; font-size: 0.88rem; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
+.arc-soon-banner .arc-soon-cta:hover { background: #f4c34d; }
+.arc-soon-banner .arc-soon-fine { font-size: 0.72rem; color: rgba(255,255,255,0.62); text-align: center; }
+@media (max-width: 760px) { .arc-soon-banner { grid-template-columns: 1fr; padding: 22px 20px; } }
+
 /* ===== 5-STEP METHOD PAYWALL ===== */
 .fs-paywall-wrap { position: relative; }
 .fs-locked { filter: blur(8px); pointer-events: none; user-select: none; transition: filter .25s ease; min-height: 600px; }
@@ -2677,7 +2698,7 @@ body {
       </button>
       <button class="nav-item" data-screen="architecture">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 9h18"/><path d="M9 3v18"/><path d="M14 14h4"/><path d="M14 17h2"/></svg>
-        Architecture
+        Architecture <span class="nav-soon">Soon</span>
       </button>
       <button class="nav-item" data-screen="consult">
         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h5"/></svg>
@@ -6984,13 +7005,24 @@ body {
     <!-- ====================== ARCHITECTURE ====================== -->
     <section class="screen page" id="screen-architecture">
       <div class="page-head">
-        <div class="crumb">Custom Home Plans</div>
+        <div class="crumb">Custom Home Plans &middot; Coming Soon</div>
         <h1>Architecture <em>&middot; Plans</em></h1>
-        <p>Real homes designed and built by Tru Life Properties &mdash; purchase the plan, see the finished product, and upgrade your package as your project grows.</p>
+        <p>Real homes designed and built by Tru Life Properties. The plan catalog is being finalized &mdash; preview the homes now and reserve early access before purchase tiers go live.</p>
       </div>
 
       <!-- ===== CATALOG VIEW ===== -->
       <div id="arc-cats-wrap">
+        <div class="arc-soon-banner" id="arc-soon-banner">
+          <div>
+            <div class="arc-soon-eyebrow">Coming Soon &middot; Early Access</div>
+            <h3>Plan packages open for <em>pre-purchase</em> soon</h3>
+            <p>Justin is finishing the Concept, Permit-Ready, and Structural packages for every home below. Reserve your spot now and you&rsquo;ll get first access and launch pricing the day they go live &mdash; no payment is taken until you confirm.</p>
+          </div>
+          <div class="arc-soon-actions">
+            <button type="button" class="arc-soon-cta" data-arc-reserve="all">Reserve Early Access</button>
+            <span class="arc-soon-fine">We&rsquo;ll reply within 2 business days</span>
+          </div>
+        </div>
         <div class="arc-intro">
           <p>Every home in this catalog is a <em>finished Tru Life build</em> &mdash; not a stock plan pulled from a catalog. You see the actual completed product before you commit, so you know exactly what you&rsquo;re building toward.</p>
           <p>Some of these plans have a story behind them. They started as renovations &mdash; properties we bought, gutted, and completely reimagined. The market response was strong enough that buyers wished they could have purchased the home outright. So we took the best of what worked, added what the original structure wouldn&rsquo;t allow, and rebuilt them as new construction. What you&rsquo;re looking at is a plan that has already been tested by real buyers in a real market.</p>
@@ -7111,11 +7143,11 @@ body {
             <p>Our specialist will schedule a call, walk through your vision, and put together a custom package that matches exactly what you&rsquo;re looking for.</p>
           </div>
           <form class="dz-custom-form" id="arc-custom-form-el" onsubmit="return submitArcCustom(event)">
-            <input type="text" placeholder="Full name" required />
-            <input type="email" placeholder="Email address" required />
-            <input type="tel" placeholder="Phone number" />
-            <input type="text" placeholder="Project address (optional)" />
-            <textarea placeholder="Tell us about your vision &mdash; style, rooms, must-haves..."></textarea>
+            <input type="text" id="arc-custom-name" placeholder="Full name" required />
+            <input type="email" id="arc-custom-email" placeholder="Email address" required />
+            <input type="tel" id="arc-custom-phone" placeholder="Phone number" />
+            <input type="text" id="arc-custom-city" placeholder="Project address (optional)" />
+            <textarea id="arc-custom-notes" placeholder="Tell us about your vision &mdash; style, rooms, must-haves..."></textarea>
             <button type="submit" class="btn btn-gold">Schedule My Call</button>
           </form>
         </div>
@@ -7738,18 +7770,19 @@ body {
             <p class="arc-modal-lede" id="arc-inquire-lede">Tell us a bit about your project. We&rsquo;ll be in touch within 2 business days to discuss your plan, location, and pricing.</p>
             <form class="arc-modal-form" onsubmit="return submitArcInquire(event)">
               <div class="full"><label>Plan / Tier</label><input type="text" id="arc-inquire-plan" readonly /></div>
-              <div><label>Full Name</label><input type="text" required /></div>
-              <div><label>Email</label><input type="email" required /></div>
-              <div><label>Phone</label><input type="tel" /></div>
-              <div><label>Project City / State</label><input type="text" placeholder="e.g. Cincinnati, OH" /></div>
-              <div class="full"><label>Notes</label><textarea placeholder="Lot status, timeline, budget thoughts, anything else we should know"></textarea></div>
-              <button type="submit" class="arc-modal-submit">Send Inquiry</button>
+              <div><label>Full Name</label><input type="text" id="arc-inquire-name" required /></div>
+              <div><label>Email</label><input type="email" id="arc-inquire-email" required /></div>
+              <div><label>Phone</label><input type="tel" id="arc-inquire-phone" /></div>
+              <div><label>Project City / State</label><input type="text" id="arc-inquire-city" placeholder="e.g. Cincinnati, OH" /></div>
+              <div class="full"><label>Notes</label><textarea id="arc-inquire-notes" placeholder="Lot status, timeline, budget thoughts, anything else we should know"></textarea></div>
+              <button type="submit" class="arc-modal-submit" id="arc-inquire-submit">Send Inquiry</button>
+              <p class="text-muted" id="arc-inquire-error" style="display:none;color:#b3261e;font-size:0.82rem;margin:8px 0 0;"></p>
             </form>
           </div>
           <div class="arc-modal-success" id="arc-inquire-success">
             <div class="arc-modal-success-icon">&#10003;</div>
-            <h3>Inquiry <em>Sent</em></h3>
-            <p class="arc-modal-lede">We&rsquo;ll be in touch within 2 business days to discuss your project and confirm pricing.</p>
+            <h3 id="arc-inquire-success-title">Inquiry <em>Sent</em></h3>
+            <p class="arc-modal-lede" id="arc-inquire-success-lede">We&rsquo;ll be in touch within 2 business days to discuss your project and confirm pricing.</p>
           </div>
         </div>
       </div>
@@ -9019,6 +9052,7 @@ function applyPaywallState() {
   });
   const fs = document.getElementById('screen-five-step');
   if (fs && fs.dataset.paywallReady === '1') fs.classList.toggle('fs-unlocked', fsIsUnlocked());
+  if (typeof bbbApplyLockState === 'function') bbbApplyLockState();
   document.body.classList.toggle('paywall-on', PAYWALL_ENABLED);
 }
 async function loadPaywallConfig() {
@@ -9056,28 +9090,47 @@ function arcUnlock(name) {
 // Justin sets prices, add the packages to GUIDE_CATALOG and switch this to the
 // Stripe checkout flow used by tplUnlock().
 document.querySelectorAll('[data-arc-buy]').forEach(btn => {
-  btn.textContent = 'Request Concept Package';
+  btn.textContent = 'Reserve This Plan';
   btn.addEventListener('click', () => {
-    openArcInquire(btn.dataset.arcBuy + '|Concept Package');
+    openArcInquire(btn.dataset.arcBuy + '|' + ARC_RESERVE_TIER);
   });
 });
 
 // Architecture: Tier 2 / Tier 3 inquiry modal
+const ARC_RESERVE_TIER = 'Early Access Reservation';
 function openArcInquire(planTier) {
   const parts = (planTier || '').split('|');
   const planKey = parts[0]; const tierName = parts[1] || 'Plans';
-  const planLabel = ARC_LABELS[planKey] || planKey;
+  const planLabel = planKey === 'all' ? 'Architecture Plans' : (ARC_LABELS[planKey] || planKey);
+  const isReserve = tierName === ARC_RESERVE_TIER;
   const overlay = document.getElementById('arc-inquire-modal');
   const planInput = document.getElementById('arc-inquire-plan');
   const title = document.getElementById('arc-inquire-title');
+  const lede = document.getElementById('arc-inquire-lede');
+  const eyebrow = overlay ? overlay.querySelector('.arc-modal-eyebrow') : null;
+  const submit = document.getElementById('arc-inquire-submit');
+  const err = document.getElementById('arc-inquire-error');
   const formWrap = document.getElementById('arc-inquire-form-wrap');
   const success = document.getElementById('arc-inquire-success');
   if (planInput) planInput.value = planLabel + ' — ' + tierName;
-  if (title) title.innerHTML = (tierName.indexOf('Construction') >= 0 ? 'Get a <em>Quote</em>' : 'Request an <em>Upgrade</em>');
+  if (title) title.innerHTML = isReserve ? 'Reserve <em>Early Access</em>' : (tierName.indexOf('Construction') >= 0 ? 'Get a <em>Quote</em>' : 'Request an <em>Upgrade</em>');
+  if (eyebrow) eyebrow.textContent = isReserve ? 'Coming Soon · Pre-Purchase List' : 'Plan Inquiry';
+  if (lede) lede.textContent = isReserve
+    ? 'Put your name on the list for ' + planLabel + '. You get first access and launch pricing the day the packages go live. Nothing is charged until you confirm your purchase.'
+    : 'Tell us a bit about your project. We\u2019ll be in touch within 2 business days to discuss your plan, location, and pricing.';
+  if (submit) { submit.textContent = isReserve ? 'Reserve My Spot' : 'Send Inquiry'; submit.disabled = false; }
+  if (err) err.style.display = 'none';
+  // Prefill from the signed-in account so reserving is one click.
+  const nameEl = document.getElementById('arc-inquire-name'); const emailEl = document.getElementById('arc-inquire-email');
+  if (nameEl && !nameEl.value && currentUser && currentUser.name) nameEl.value = currentUser.name;
+  if (emailEl && !emailEl.value && currentUser && currentUser.email) emailEl.value = currentUser.email;
   if (formWrap) formWrap.style.display = '';
   if (success) success.classList.remove('show');
   if (overlay) overlay.classList.add('show');
 }
+document.querySelectorAll('[data-arc-reserve]').forEach(btn => {
+  btn.addEventListener('click', () => openArcInquire(btn.dataset.arcReserve + '|' + ARC_RESERVE_TIER));
+});
 document.querySelectorAll('[data-arc-inquire]').forEach(btn => {
   btn.addEventListener('click', () => openArcInquire(btn.dataset.arcInquire));
 });
@@ -9092,10 +9145,34 @@ document.querySelectorAll('[data-arc-modal-close]').forEach(b => {
   if (!overlay) return;
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.classList.remove('show'); });
 })();
-function submitArcInquire(e) {
+async function postArcInquiry(payload) {
+  const res = await authFetch('/api/arc/inquiries', { method: 'POST', body: JSON.stringify(payload) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || 'Could not send right now. Please try again.');
+  return data;
+}
+async function submitArcInquire(e) {
   e.preventDefault();
+  const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const plan = v('arc-inquire-plan');
+  const isReserve = plan.indexOf(ARC_RESERVE_TIER) >= 0;
+  const submit = document.getElementById('arc-inquire-submit');
+  const err = document.getElementById('arc-inquire-error');
+  if (submit) { submit.disabled = true; submit.textContent = 'Sending\u2026'; }
+  if (err) err.style.display = 'none';
+  try {
+    await postArcInquiry({ kind: isReserve ? 'reservation' : 'inquiry', plan, name: v('arc-inquire-name'), email: v('arc-inquire-email'), phone: v('arc-inquire-phone'), city: v('arc-inquire-city'), notes: v('arc-inquire-notes') });
+  } catch (ex) {
+    if (err) { err.textContent = ex.message; err.style.display = ''; }
+    if (submit) { submit.disabled = false; submit.textContent = isReserve ? 'Reserve My Spot' : 'Send Inquiry'; }
+    return false;
+  }
   const formWrap = document.getElementById('arc-inquire-form-wrap');
   const success = document.getElementById('arc-inquire-success');
+  const st = document.getElementById('arc-inquire-success-title'); const sl = document.getElementById('arc-inquire-success-lede');
+  if (st) st.innerHTML = isReserve ? 'You\u2019re on the <em>List</em>' : 'Inquiry <em>Sent</em>';
+  if (sl) sl.textContent = isReserve ? 'We\u2019ll email you the moment the packages open, with your early-access pricing. Nothing has been charged.' : 'We\u2019ll be in touch within 2 business days to discuss your project and confirm pricing.';
+  ['arc-inquire-phone', 'arc-inquire-city', 'arc-inquire-notes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   if (formWrap) formWrap.style.display = 'none';
   if (success) success.classList.add('show');
   return false;
@@ -9127,9 +9204,19 @@ document.querySelectorAll('[data-arc-scroll-custom]').forEach(a => {
 });
 
 // Architecture: custom-call form submit
-function submitArcCustom(e) {
+async function submitArcCustom(e) {
   e.preventDefault();
   const f = document.getElementById('arc-custom-form-el');
+  const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const btn = f ? f.querySelector('button[type="submit"]') : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending\u2026'; }
+  try {
+    await postArcInquiry({ kind: 'custom', plan: 'Custom Design Consultation', name: v('arc-custom-name'), email: v('arc-custom-email'), phone: v('arc-custom-phone'), city: v('arc-custom-city'), notes: v('arc-custom-notes') });
+  } catch (ex) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Schedule My Call'; }
+    window.alert(ex.message);
+    return false;
+  }
   if (f) {
     f.innerHTML = '<div style="text-align:center;padding:30px 10px"><h4 style="color:var(--gold);font-family:var(--serif);font-size:1.4rem;margin-bottom:8px">Got it!</h4><p style="color:rgba(255,255,255,0.92)">Our specialist will be in touch within 2 business days to schedule your consultation call.</p></div>';
   }
@@ -10885,6 +10972,7 @@ async function tplRefresh() {
         detail.classList.toggle('dz-unlocked', tplIsUnlocked(name));
       }
     });
+    if (typeof bbbApplyLockState === 'function') bbbApplyLockState();
   } catch (_) { /* offline or logged out — keep prior state */ }
 }
 function tplIsUnlocked(name) { return !PAYWALL_ENABLED || isOwnerMode() || _tplPurchased.has(name); }
@@ -11613,6 +11701,82 @@ const BBB_MODULES = [
 ];
 const BBB_BASE = 'brick/fixflip/';
 let bbbCurrent = 1;
+
+/* ---- Brick by Brick paywall ($499, Stripe Checkout; unlock granted by webhook) ---- */
+const BBB_PRICE = 499;
+const BBB_GUIDE_ID = 'fix-flip';
+function bbbIsUnlocked() { return !PAYWALL_ENABLED || (typeof isOwnerMode === 'function' && isOwnerMode()) || _tplPurchased.has(BBB_GUIDE_ID); }
+async function bbbUnlock() {
+  try {
+    const res = await authFetch('/api/guides/checkout', { method: 'POST', body: JSON.stringify({ guide_id: BBB_GUIDE_ID }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { window.alert(data.detail || 'Could not start checkout for Brick by Brick.'); return; }
+    if (data.checkout_url) window.location.href = data.checkout_url;
+  } catch (_) { window.alert('Could not reach the account server. Try again.'); }
+}
+(function setupBBBPaywall() {
+  const screen = document.getElementById('screen-brick');
+  const track = document.getElementById('bbb-track-fixflip');
+  if (!screen || !track || screen.dataset.paywallReady === '1') return;
+  const wrap = document.createElement('div');
+  wrap.className = 'bbb-paywall-wrap';
+  const paywall = document.createElement('div');
+  paywall.className = 'fs-paywall bbb-paywall';
+  paywall.innerHTML =
+    '<div class="bbb-paywall-eyebrow-logo">Brick by Brick &middot; Premium Course</div>' +
+    '<h3 class="fs-paywall-title">Unlock <em>Fix &amp; Flip Foundations</em></h3>' +
+    '<p class="fs-paywall-lede">The Brick by Brick course &mdash; how Tru Life finds, buys, renovates, and sells flips, taught by the operators doing it right now.</p>' +
+    '<div class="fs-paywall-feats">' +
+      '<div class="fs-paywall-feat">Level 01 &middot; Fix &amp; Flip Foundations &mdash; three modules streaming now</div>' +
+      '<div class="fs-paywall-feat">The 75% Rule, timing &amp; design, market selection, the Zillow Method, negotiation</div>' +
+      '<div class="fs-paywall-feat">New modules added to your course as Justin releases them</div>' +
+      '<div class="fs-paywall-feat">Progress tracking so you pick up where you left off</div>' +
+    '</div>' +
+    '<div class="fs-paywall-price">$' + BBB_PRICE + '<small>One-time &middot; Lifetime access</small></div>' +
+    '<button type="button" class="fs-paywall-cta" id="bbb-unlock-btn">Unlock the Course</button>' +
+    '<p class="fs-paywall-note">Secure checkout by Stripe. Access is tied to your Tru Life login on every device.</p>';
+  const locked = document.createElement('div');
+  locked.className = 'bbb-locked';
+  track.parentNode.insertBefore(wrap, track);
+  locked.appendChild(track);
+  wrap.appendChild(paywall);
+  wrap.appendChild(locked);
+  screen.dataset.paywallReady = '1';
+  paywall.querySelector('#bbb-unlock-btn').addEventListener('click', () => {
+    if (window.confirm('Unlock Brick by Brick: Fix & Flip Foundations for $' + BBB_PRICE + '?\n\nYou\'ll be taken to a secure Stripe checkout page to complete payment.')) bbbUnlock();
+  });
+})();
+let _bbbLockState = null;
+function bbbApplyLockState() {
+  const screen = document.getElementById('screen-brick');
+  if (!screen) return;
+  const unlocked = bbbIsUnlocked();
+  screen.classList.toggle('bbb-unlocked', unlocked);
+  if (_bbbLockState !== unlocked) {
+    _bbbLockState = unlocked;
+    // Re-point the player: locked users get no media source, unlocked users
+    // get a (tokenized when paywalled) stream for the current module.
+    if (document.getElementById('bbb-player')) bbbLoadModule(bbbCurrent, false);
+  }
+  bbbRenderProgress();
+}
+// Short-lived media token the server requires for module videos while the paywall is on.
+let _bbbMediaToken = null, _bbbMediaTokenExp = 0;
+async function bbbMediaToken() {
+  if (_bbbMediaToken && Date.now() < _bbbMediaTokenExp - 60000) return _bbbMediaToken;
+  const res = await authFetch('/api/brick/media-token');
+  if (!res.ok) throw new Error('no-media-token');
+  const data = await res.json();
+  _bbbMediaToken = data.token; _bbbMediaTokenExp = Date.now() + (data.expires_in || 3600) * 1000;
+  return _bbbMediaToken;
+}
+async function bbbMediaUrl(slug) {
+  const base = BBB_BASE + slug + '.mp4';
+  if (!PAYWALL_ENABLED) return base;
+  // Server enforces the token only while its paywall flag is on; in preview
+  // mode the request is harmless and keeps one code path.
+  try { return base + '?t=' + encodeURIComponent(await bbbMediaToken()); } catch (_) { return base; }
+}
 function bbbStorageKey() { return 'trulife.bbb.progress.' + (currentUser && currentUser.id != null ? currentUser.id : 'guest'); }
 function bbbLoadProgress() {
   try { const raw = localStorage.getItem(bbbStorageKey()); const data = raw ? JSON.parse(raw) : {}; return data && typeof data === 'object' ? data : {}; }
@@ -11653,8 +11817,9 @@ function bbbRenderProgress() {
   set('bbb-ff-progress-pct', el => el.textContent = pct + '%');
   set('dash-bbb-fill', el => el.style.width = pct + '%');
   set('dash-bbb-pct', el => el.textContent = pct + '%');
-  set('dash-bbb-label', el => el.textContent = done === 0 ? `${total} modules live` : (done === total ? 'Level 01 complete' : `Module ${done} of ${total} done`));
-  set('dash-bbb-cta', el => el.textContent = done === 0 ? 'Start Course' : (done === total ? 'Review Course' : 'Resume Course'));
+  const locked = typeof bbbIsUnlocked === 'function' && !bbbIsUnlocked();
+  set('dash-bbb-label', el => el.textContent = locked ? 'Premium course · $' + BBB_PRICE : (done === 0 ? `${total} modules live` : (done === total ? 'Level 01 complete' : `Module ${done} of ${total} done`)));
+  set('dash-bbb-cta', el => el.textContent = locked ? 'Unlock the Course' : (done === 0 ? 'Start Course' : (done === total ? 'Review Course' : 'Resume Course')));
   const mark = document.getElementById('bbb-mark-complete');
   if (mark) {
     const complete = bbbIsComplete(bbbCurrent);
@@ -11666,6 +11831,7 @@ function bbbRenderProgress() {
   if (next) next.style.display = bbbCurrent < total ? '' : 'none';
 }
 
+let _bbbLoadSeq = 0;
 function bbbLoadModule(n, autoplay) {
   const m = BBB_MODULES.find(x => x.n === n);
   const video = document.getElementById('bbb-player');
@@ -11673,10 +11839,16 @@ function bbbLoadModule(n, autoplay) {
   bbbCurrent = n;
   video.pause();
   video.poster = BBB_BASE + m.slug + '-poster.jpg';
-  const src = video.querySelector('source');
-  if (src) src.src = BBB_BASE + m.slug + '.mp4'; else video.src = BBB_BASE + m.slug + '.mp4';
-  video.load();
-  if (autoplay) { const p = video.play(); if (p && p.catch) p.catch(() => {}); }
+  const srcEl = video.querySelector('source');
+  const seq = ++_bbbLoadSeq;
+  const setSrc = (url) => {
+    if (seq !== _bbbLoadSeq) return;
+    if (srcEl) { if (url) srcEl.src = url; else srcEl.removeAttribute('src'); } else { if (url) video.src = url; else video.removeAttribute('src'); }
+    video.load();
+    if (url && autoplay) { const p = video.play(); if (p && p.catch) p.catch(() => {}); }
+  };
+  if (!bbbIsUnlocked()) setSrc(null);
+  else bbbMediaUrl(m.slug).then(setSrc);
   document.getElementById('bbb-np-eyebrow').textContent = `Module ${m.n} · ${m.dur}`;
   document.getElementById('bbb-np-title').textContent = m.title;
   document.getElementById('bbb-np-desc').textContent = m.desc;
@@ -11720,7 +11892,8 @@ function bbbToggleComplete() {
 onceAuthed(() => {
   // Progress is stored per account on this device; re-render after sign-in so one user never sees another's progress.
   bbbCurrent = bbbNextIncomplete() || 1;
-  bbbLoadModule(bbbCurrent, false);
+  _bbbMediaToken = null; _bbbMediaTokenExp = 0; _bbbLockState = null;
+  bbbApplyLockState();
 });
 
 async function saveAccountPreferences() {

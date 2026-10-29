@@ -115,7 +115,15 @@ GUIDE_CATALOG = [
     {"id": "canyon", "name": "Canyon Collection", "price": 697},
     {"id": "colonial", "name": "Colonial", "price": 797},
     {"id": "five-step-method", "name": "5 Step Method", "price": 49},
+    # Brick by Brick course (Level 01 Fix & Flip Foundations, with later
+    # modules added to the same purchase as Justin releases them).
+    {"id": "fix-flip", "name": "Brick by Brick: Fix & Flip Foundations", "price": 499, "kind": "course"},
 ]
+
+# Catalog items whose paid media is served through the protected /brick
+# route below (anything else in /brick — posters, title cards — is public).
+BRICK_COURSE_GUIDE_ID = "fix-flip"
+MEDIA_TOKEN_SECONDS = 8 * 3600
 
 # --- Admin unlock key: legacy pre-Stripe mechanism, kept only as an owner/
 # support fallback (e.g. comping a guide for a customer manually). Real
@@ -221,6 +229,18 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS arc_inquiries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            kind TEXT NOT NULL DEFAULT 'inquiry',
+            plan TEXT,
+            name TEXT,
+            email TEXT,
+            phone TEXT,
+            city TEXT,
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
         CREATE TABLE IF NOT EXISTS guide_purchases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -390,6 +410,8 @@ AFFILIATE_ADMIN_EMAIL = os.environ.get("TRULIFE_AFFILIATE_ADMIN_EMAIL", "justin@
 # there's a record of transactions for bookkeeping without depending on any
 # one person's personal inbox.
 ACCOUNTING_EMAIL = os.environ.get("TRULIFE_ACCOUNTING_EMAIL", "finances@trulifefiles.com").strip().lower()
+# Where architecture reservations / plan inquiries are forwarded.
+INQUIRY_EMAIL = os.environ.get("TRULIFE_INQUIRY_EMAIL", "info@trulifeproperties.com").strip().lower() or "info@trulifeproperties.com"
 if not ACCOUNTING_EMAIL or ACCOUNTING_EMAIL == "info@trulifeproperties.com":
     ACCOUNTING_EMAIL = "finances@trulifefiles.com"
 AFFILIATE_ADMIN_PASSWORD = _require_secret("TRULIFE_AFFILIATE_ADMIN_PASSWORD", "TruLife2026!")
@@ -470,10 +492,28 @@ if os.path.isdir(_STATIC_DIR):
     app.mount("/design", StaticFiles(directory=os.path.join(_STATIC_DIR, "design")), name="design-assets")
     if os.path.isdir(os.path.join(_STATIC_DIR, "assets")):
         app.mount("/assets", StaticFiles(directory=os.path.join(_STATIC_DIR, "assets")), name="assets")
-    # Brick by Brick course media (module videos + posters). StaticFiles honors
-    # HTTP Range requests, so the <video> player can seek without a full download.
-    if os.path.isdir(os.path.join(_STATIC_DIR, "brick")):
-        app.mount("/brick", StaticFiles(directory=os.path.join(_STATIC_DIR, "brick")), name="brick-course-media")
+    # Brick by Brick course media. Posters/title cards are public; module
+    # videos (.mp4) are paid content. When the paywall is on, a video is
+    # served only with a short-lived media token issued to a signed-in
+    # account that owns the course (or the owner account). FileResponse
+    # honors HTTP Range requests so the <video> player can seek.
+    _BRICK_DIR = os.path.realpath(os.path.join(_STATIC_DIR, "brick"))
+
+    @app.get("/brick/{path:path}", include_in_schema=False)
+    def brick_media(path: str, t: str | None = None):
+        full = os.path.realpath(os.path.join(_BRICK_DIR, path))
+        if not full.startswith(_BRICK_DIR + os.sep) or not os.path.isfile(full):
+            raise HTTPException(404, "Not found")
+        if full.lower().endswith(".mp4") and PAYWALL_ENABLED:
+            if not t:
+                raise HTTPException(403, "Course access required")
+            try:
+                payload = jwt.decode(t, JWT_SECRET, algorithms=[JWT_ALG])
+            except jwt.PyJWTError:
+                raise HTTPException(403, "Media link expired, reload the course")
+            if payload.get("media") != BRICK_COURSE_GUIDE_ID or not isinstance(payload.get("uid"), int):
+                raise HTTPException(403, "Course access required")
+        return FileResponse(full)
 
     _INDEX_HTML_PATH = os.path.join(_STATIC_DIR, "index.html")
 
@@ -1201,6 +1241,63 @@ def list_guides(authorization: str | None = Header(default=None)):
     return [{**g, "purchased": g["id"] in owned} for g in GUIDE_CATALOG]
 
 
+def user_owns_guide(row, guide_id: str) -> bool:
+    if row["is_owner"]:
+        return True
+    return db.execute(
+        "SELECT 1 FROM guide_purchases WHERE user_id = ? AND guide_id = ?", [row["id"], guide_id]
+    ).fetchone() is not None
+
+
+@app.get("/api/brick/media-token")
+def brick_media_token(authorization: str | None = Header(default=None)):
+    """Short-lived token that lets the <video> element fetch paid Brick by
+    Brick modules while the paywall is on. Issued only to accounts that own
+    the course (or the owner account). The token carries no session rights."""
+    row = current_user(authorization)
+    if PAYWALL_ENABLED and not user_owns_guide(row, BRICK_COURSE_GUIDE_ID):
+        raise HTTPException(403, "Purchase Brick by Brick to stream the modules.")
+    payload = {"uid": row["id"], "media": BRICK_COURSE_GUIDE_ID, "exp": int(time.time()) + MEDIA_TOKEN_SECONDS}
+    return {"token": jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG), "expires_in": MEDIA_TOKEN_SECONDS}
+
+
+class ArcInquiryBody(BaseModel):
+    kind: str = Field(default="inquiry", max_length=32)  # reservation | inquiry | custom
+    plan: str = Field(default="", max_length=160)
+    name: str = Field(default="", max_length=120)
+    email: str = Field(default="", max_length=200)
+    phone: str = Field(default="", max_length=60)
+    city: str = Field(default="", max_length=120)
+    notes: str = Field(default="", max_length=2000)
+
+
+@app.post("/api/arc/inquiries")
+def create_arc_inquiry(body: ArcInquiryBody, authorization: str | None = Header(default=None)):
+    """Architecture plan reservations and inquiries. Stored, then forwarded
+    to the inquiry inbox. No payment is taken here: pre-purchase checkout is
+    added once Justin sets the reservation price."""
+    row = current_user(authorization)
+    kind = body.kind.strip().lower() if body.kind.strip().lower() in ("reservation", "inquiry", "custom") else "inquiry"
+    email = (body.email or row["email"] or "").strip().lower()
+    name = (body.name or row["name"] or "").strip()
+    if not email:
+        raise HTTPException(400, "Email is required")
+    cur = db.execute(
+        """INSERT INTO arc_inquiries (user_id, kind, plan, name, email, phone, city, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        [row["id"], kind, body.plan.strip(), name, email, body.phone.strip(), body.city.strip(), body.notes.strip()],
+    )
+    db.commit()
+    inquiry_id = cur.lastrowid
+    label = {"reservation": "Early-access reservation", "custom": "Custom consultation request", "inquiry": "Plan inquiry"}[kind]
+    html = email_service.render_arc_inquiry_email(
+        label=label, plan=body.plan.strip(), name=name, email=email, phone=body.phone.strip(),
+        city=body.city.strip(), notes=body.notes.strip(), account_email=row["email"],
+    )
+    email_service.send_email(to=INQUIRY_EMAIL, subject=f"[Architecture] {label}: {body.plan.strip() or 'General'}", html=html)
+    return {"ok": True, "id": inquiry_id, "kind": kind}
+
+
 @app.post("/api/guides/unlock")
 def unlock_guide(body: UnlockBody, authorization: str | None = Header(default=None)):
     """Owner/support manual grant — NOT the purchase path. Real purchases go
@@ -1321,7 +1418,7 @@ def fulfill_checkout_session(session: dict) -> dict:
         purchased_at_str = datetime.datetime.utcnow().strftime("%B %d, %Y")
         email_service.send_email(
             to=buyer["email"],
-            subject=f"Your receipt — {guide['name']} Guide",
+            subject=f"Your receipt — {guide['name']}" + ("" if guide.get("kind") == "course" else " Guide"),
             html=email_service.render_receipt_email(
                 guide_name=guide["name"],
                 amount_paid=amount_total / 100.0,
@@ -1332,7 +1429,7 @@ def fulfill_checkout_session(session: dict) -> dict:
         # one side never blocks or depends on the other.
         email_service.send_email(
             to=ACCOUNTING_EMAIL,
-            subject=f"[Purchase] {guide['name']} Guide — ${amount_total / 100.0:,.2f}",
+            subject=f"[Purchase] {guide['name']}" + ("" if guide.get("kind") == "course" else " Guide") + f" — ${amount_total / 100.0:,.2f}",
             html=email_service.render_accounting_notification_email(
                 buyer_email=buyer["email"],
                 guide_name=guide["name"],

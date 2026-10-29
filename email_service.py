@@ -16,6 +16,7 @@ Configuration (env vars):
 - TRULIFE_ENV=production   — requires both of the above to be set at
   startup, same pattern as the other production secrets in api_server.py.
 """
+import html as html_mod
 import json
 import logging
 import os
@@ -159,3 +160,27 @@ def render_accounting_notification_email(
       <p style="font-size:12px;color:#8a8a8a;margin:0;">Automated accounting copy — sent for every completed guide purchase.</p>
     """
     return _WRAPPER.format(content=content)
+
+
+def _esc(value: str) -> str:
+    return html_mod.escape(str(value or ""), quote=True)
+
+
+def render_arc_inquiry_email(label: str, plan: str, name: str, email: str, phone: str,
+                             city: str, notes: str, account_email: str) -> str:
+    """Internal notification for an architecture reservation / inquiry."""
+    rows = [
+        ("Type", label), ("Plan / Tier", plan or "General"), ("Name", name or "—"),
+        ("Email", email), ("Phone", phone or "—"), ("Project location", city or "—"),
+        ("App account", account_email), ("Notes", notes or "—"),
+    ]
+    table = "".join(
+        f'<tr><td style="padding:6px 10px 6px 0;color:#6b6f80;white-space:nowrap;vertical-align:top;">{_esc(k)}</td>'
+        f'<td style="padding:6px 0;color:#031158;">{_esc(v)}</td></tr>' for k, v in rows
+    )
+    body = (
+        f'<h2 style="margin:0 0 6px;color:#031158;font-size:20px;">Architecture: {_esc(label)}</h2>'
+        '<p style="margin:0 0 16px;color:#6b6f80;font-size:14px;">Submitted from the Tru Life Investor App.</p>'
+        f'<table style="border-collapse:collapse;font-size:14px;">{table}</table>'
+    )
+    return _WRAPPER.format(content=body)
