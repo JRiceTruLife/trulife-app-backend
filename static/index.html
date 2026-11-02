@@ -2424,6 +2424,10 @@ body {
 .aff-error { background: #fde8e8; color: #a12c2c; }
 .aff-error.show { display: block; }
 .aff-success { background: var(--gold-soft); color: #7a5a10; }
+.aff-program-note { display: flex; gap: 14px; align-items: center; background: var(--navy); color: var(--white); border-radius: 14px; padding: 16px 20px; margin-bottom: 22px; border: 1px solid rgba(218,166,31,0.4); }
+.aff-program-note .aff-program-rate { font-family: var(--serif); font-size: 2rem; color: var(--gold); line-height: 1; min-width: 86px; text-align: center; }
+.aff-program-note p { margin: 0; font-size: 0.9rem; color: rgba(255,255,255,0.85); }
+.aff-program-note strong { color: var(--white); }
 .aff-success.show { display: block; }
 .aff-table-wrap { background: #fff; border: 1px solid #e5e7ef; border-radius: 12px; overflow: hidden; overflow-x: auto; }
 .aff-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 640px; }
@@ -2553,6 +2557,10 @@ body {
     </nav>
     <main class="aff-main">
       <section class="aff-panel active" id="aff-panel-overview">
+        <div class="aff-program-note">
+          <div class="aff-program-rate">20%</div>
+          <p><strong>Flat 20% commission on every in-app sale you&rsquo;re part of.</strong> 5 Step Method, Design Guides, Brick by Brick modules &mdash; anything a client you referred buys in the app pays you 20% of the price (net of refunds). Same rate for every product and every partner.</p>
+        </div>
         <div class="aff-stat-grid" id="aff-stat-grid"></div>
         <div class="aff-card-grid" id="aff-affiliate-cards"></div>
       </section>
@@ -2588,7 +2596,7 @@ body {
 
       <section class="aff-panel" id="aff-panel-affiliates">
         <div class="aff-panel-head">
-          <h2 class="aff-h2">Affiliates &amp; Rates</h2>
+          <h2 class="aff-h2">Affiliates</h2>
           <button type="button" class="aff-btn-sm" id="aff-add-affiliate-btn">+ Add Affiliate</button>
         </div>
         <div id="aff-add-affiliate-form" class="aff-form aff-inline-form" style="display:none;">
@@ -2596,13 +2604,12 @@ body {
           <div class="aff-field"><label>Handle</label><input type="text" id="aff-new-handle" placeholder="@handle" /></div>
           <div class="aff-field"><label>Email</label><input type="email" id="aff-new-email" /></div>
           <div class="aff-field"><label>Temp Password</label><input type="text" id="aff-new-password" /></div>
-          <div class="aff-field"><label>Default Rate (%)</label><input type="number" id="aff-new-rate" min="0" max="100" step="0.1" value="10" /></div>
           <div id="aff-new-error" class="aff-error"></div>
           <button type="button" class="aff-submit" id="aff-new-submit">Create Affiliate</button>
         </div>
         <div class="aff-table-wrap">
           <table class="aff-table" id="aff-affiliates-table">
-            <thead><tr><th>Name</th><th>Handle</th><th>Email</th><th>Default Rate</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Handle</th><th>Email</th><th>Commission</th><th>Status</th><th></th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -6984,14 +6991,13 @@ body {
       </div>
 
       <div class="card">
-        <div class="card-head"><h3>Affiliate Partner Program · 25% Commission</h3><span class="tag">Active</span></div>
+        <div class="card-head"><h3>Affiliate Partner Program · 20% Commission</h3><span class="tag">Active</span></div>
         <table>
-          <thead><tr><th>Tier</th><th>Product</th><th class="cell-num col-h">Price</th><th class="cell-num col-h">Your Share</th></tr></thead>
+          <thead><tr><th>Item</th><th>Product</th><th class="cell-num col-h">Price</th><th class="cell-num col-h">Your Share</th></tr></thead>
           <tbody>
-            <tr><td><span class="badge badge-navy">Level 1</span></td><td>Fix &amp; Flip Foundations</td><td class="cell-num">$497</td><td class="cell-num text-gold cell-strong">$124.25</td></tr>
-            <tr><td><span class="badge badge-navy">Level 2</span></td><td>Buy &amp; Hold Mastery</td><td class="cell-num">$997</td><td class="cell-num text-gold cell-strong">$249.25</td></tr>
-            <tr><td><span class="badge badge-navy">Level 3</span></td><td>Build to Profit</td><td class="cell-num">$1,997</td><td class="cell-num text-gold cell-strong">$499.25</td></tr>
-            <tr><td><span class="badge badge-gold">Bundle</span></td><td>Full Ladder</td><td class="cell-num">$2,497</td><td class="cell-num text-gold cell-strong">$624.25</td></tr>
+            <tr><td><span class="badge badge-navy">Course</span></td><td>Brick by Brick &middot; Fix &amp; Flip Foundations</td><td class="cell-num">$499</td><td class="cell-num text-gold cell-strong">$99.80</td></tr>
+            <tr><td><span class="badge badge-navy">Guide</span></td><td>Design Guides (Linder &ndash; Colonial)</td><td class="cell-num">$497&ndash;$797</td><td class="cell-num text-gold cell-strong">$99.40&ndash;$159.40</td></tr>
+            <tr><td><span class="badge badge-navy">Module</span></td><td>5 Step Method</td><td class="cell-num">$49</td><td class="cell-num text-gold cell-strong">$9.80</td></tr>
           </tbody>
         </table>
         <div style="display: flex; gap: 12px; margin-top: 22px;">
@@ -7007,20 +7013,20 @@ body {
       <div class="page-head">
         <div class="crumb">Custom Home Plans &middot; Coming Soon</div>
         <h1>Architecture <em>&middot; Plans</em></h1>
-        <p>Real homes designed and built by Tru Life Properties. The plan catalog is being finalized &mdash; preview the homes now and reserve early access before purchase tiers go live.</p>
+        <p>Real homes designed and built by Tru Life Properties. The plan catalog is being finalized &mdash; preview the homes now and we&rsquo;ll let you know the moment plans are available.</p>
       </div>
 
       <!-- ===== CATALOG VIEW ===== -->
       <div id="arc-cats-wrap">
         <div class="arc-soon-banner" id="arc-soon-banner">
           <div>
-            <div class="arc-soon-eyebrow">Coming Soon &middot; Early Access</div>
-            <h3>Plan packages open for <em>pre-purchase</em> soon</h3>
-            <p>Justin is finishing the Concept, Permit-Ready, and Structural packages for every home below. Reserve your spot now and you&rsquo;ll get first access and launch pricing the day they go live &mdash; no payment is taken until you confirm.</p>
+            <div class="arc-soon-eyebrow">Coming Soon</div>
+            <h3>Plan packages are <em>coming soon</em></h3>
+            <p>Justin is finishing the Concept, Permit-Ready, and Structural packages for every home below. Plans are not for sale yet &mdash; browse the finished builds now and tap below to be notified the day they launch.</p>
           </div>
           <div class="arc-soon-actions">
-            <button type="button" class="arc-soon-cta" data-arc-reserve="all">Reserve Early Access</button>
-            <span class="arc-soon-fine">We&rsquo;ll reply within 2 business days</span>
+            <button type="button" class="arc-soon-cta" data-arc-reserve="all">Notify Me at Launch</button>
+            <span class="arc-soon-fine">No payment, no commitment</span>
           </div>
         </div>
         <div class="arc-intro">
@@ -8566,34 +8572,13 @@ async function loadAffAffiliatesList() {
         '<td>' + escapeHtml(a.name) + '</td>' +
         '<td>' + escapeHtml(a.handle || '') + '</td>' +
         '<td>' + escapeHtml(a.email) + '</td>' +
-        '<td><input type="number" class="aff-rate-input" data-id="' + a.id + '" min="0" max="100" step="0.1" value="' + a.default_rate + '" style="width:70px;padding:6px 8px;border:1px solid #dfe1ea;border-radius:6px;" /></td>' +
+        '<td><strong>' + (a.program_rate != null ? a.program_rate : 20) + '%</strong> <span class="text-muted" style="font-size:0.78rem;">flat, all products</span></td>' +
         '<td><span class="aff-badge aff-badge-active">Active</span></td>' +
         '<td style="white-space:nowrap;">' +
-          '<button type="button" class="aff-copy-btn aff-save-rate-btn" data-id="' + a.id + '">Save Rate</button> ' +
           '<button type="button" class="aff-copy-btn aff-set-login-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-email="' + escapeHtml(a.email || '') + '">' + (a.email ? 'Reset Login' : 'Set Login') + '</button>' +
         '</td>' +
       '</tr>'
     )).join('') || '<tr><td colspan="6">No affiliates yet.</td></tr>';
-
-    tbody.querySelectorAll('.aff-save-rate-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const id = btn.getAttribute('data-id');
-        const input = tbody.querySelector('.aff-rate-input[data-id="' + id + '"]');
-        const rate = parseFloat(input.value);
-        btn.disabled = true; btn.textContent = 'Saving\u2026';
-        try {
-          const res = await affiliateFetch('/api/affiliate/list/' + id + '/rates', {
-            method: 'PUT', body: JSON.stringify({ default_rate: rate }),
-          });
-          if (!res.ok) { const d = await res.json(); throw new Error(d.detail || 'Failed to save'); }
-          btn.textContent = 'Saved';
-          setTimeout(() => { btn.textContent = 'Save Rate'; btn.disabled = false; }, 1200);
-        } catch (err) {
-          alert(err.message);
-          btn.disabled = false; btn.textContent = 'Save Rate';
-        }
-      });
-    });
 
     tbody.querySelectorAll('.aff-set-login-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -8637,7 +8622,6 @@ document.getElementById('aff-new-submit').addEventListener('click', async () => 
     handle: document.getElementById('aff-new-handle').value.trim(),
     email: document.getElementById('aff-new-email').value.trim(),
     password: document.getElementById('aff-new-password').value,
-    default_rate: parseFloat(document.getElementById('aff-new-rate').value || '10'),
   };
   if (!body.name || !body.email) {
     errEl.textContent = 'Name and email are required.';
@@ -8652,7 +8636,6 @@ document.getElementById('aff-new-submit').addEventListener('click', async () => 
     if (!res.ok) throw new Error(data.detail || 'Could not create affiliate');
     document.getElementById('aff-add-affiliate-form').style.display = 'none';
     ['aff-new-name', 'aff-new-handle', 'aff-new-email', 'aff-new-password'].forEach(id => { document.getElementById(id).value = ''; });
-    document.getElementById('aff-new-rate').value = '10';
     loadAffAffiliatesList();
   } catch (err) {
     errEl.textContent = err.message;
@@ -9090,14 +9073,14 @@ function arcUnlock(name) {
 // Justin sets prices, add the packages to GUIDE_CATALOG and switch this to the
 // Stripe checkout flow used by tplUnlock().
 document.querySelectorAll('[data-arc-buy]').forEach(btn => {
-  btn.textContent = 'Reserve This Plan';
+  btn.textContent = 'Notify Me About This Plan';
   btn.addEventListener('click', () => {
     openArcInquire(btn.dataset.arcBuy + '|' + ARC_RESERVE_TIER);
   });
 });
 
 // Architecture: Tier 2 / Tier 3 inquiry modal
-const ARC_RESERVE_TIER = 'Early Access Reservation';
+const ARC_RESERVE_TIER = 'Launch Notification';
 function openArcInquire(planTier) {
   const parts = (planTier || '').split('|');
   const planKey = parts[0]; const tierName = parts[1] || 'Plans';
@@ -9113,12 +9096,12 @@ function openArcInquire(planTier) {
   const formWrap = document.getElementById('arc-inquire-form-wrap');
   const success = document.getElementById('arc-inquire-success');
   if (planInput) planInput.value = planLabel + ' — ' + tierName;
-  if (title) title.innerHTML = isReserve ? 'Reserve <em>Early Access</em>' : (tierName.indexOf('Construction') >= 0 ? 'Get a <em>Quote</em>' : 'Request an <em>Upgrade</em>');
-  if (eyebrow) eyebrow.textContent = isReserve ? 'Coming Soon · Pre-Purchase List' : 'Plan Inquiry';
+  if (title) title.innerHTML = isReserve ? 'Get <em>Notified</em> at Launch' : (tierName.indexOf('Construction') >= 0 ? 'Get a <em>Quote</em>' : 'Request an <em>Upgrade</em>');
+  if (eyebrow) eyebrow.textContent = isReserve ? 'Coming Soon' : 'Plan Inquiry';
   if (lede) lede.textContent = isReserve
-    ? 'Put your name on the list for ' + planLabel + '. You get first access and launch pricing the day the packages go live. Nothing is charged until you confirm your purchase.'
+    ? 'Leave your details and we\u2019ll email you the day ' + planLabel + (planKey === 'all' ? ' are' : ' is') + ' available. Plans are not for sale yet \u2014 no payment, no commitment.'
     : 'Tell us a bit about your project. We\u2019ll be in touch within 2 business days to discuss your plan, location, and pricing.';
-  if (submit) { submit.textContent = isReserve ? 'Reserve My Spot' : 'Send Inquiry'; submit.disabled = false; }
+  if (submit) { submit.textContent = isReserve ? 'Notify Me' : 'Send Inquiry'; submit.disabled = false; }
   if (err) err.style.display = 'none';
   // Prefill from the signed-in account so reserving is one click.
   const nameEl = document.getElementById('arc-inquire-name'); const emailEl = document.getElementById('arc-inquire-email');
@@ -9161,17 +9144,17 @@ async function submitArcInquire(e) {
   if (submit) { submit.disabled = true; submit.textContent = 'Sending\u2026'; }
   if (err) err.style.display = 'none';
   try {
-    await postArcInquiry({ kind: isReserve ? 'reservation' : 'inquiry', plan, name: v('arc-inquire-name'), email: v('arc-inquire-email'), phone: v('arc-inquire-phone'), city: v('arc-inquire-city'), notes: v('arc-inquire-notes') });
+    await postArcInquiry({ kind: isReserve ? 'waitlist' : 'inquiry', plan, name: v('arc-inquire-name'), email: v('arc-inquire-email'), phone: v('arc-inquire-phone'), city: v('arc-inquire-city'), notes: v('arc-inquire-notes') });
   } catch (ex) {
     if (err) { err.textContent = ex.message; err.style.display = ''; }
-    if (submit) { submit.disabled = false; submit.textContent = isReserve ? 'Reserve My Spot' : 'Send Inquiry'; }
+    if (submit) { submit.disabled = false; submit.textContent = isReserve ? 'Notify Me' : 'Send Inquiry'; }
     return false;
   }
   const formWrap = document.getElementById('arc-inquire-form-wrap');
   const success = document.getElementById('arc-inquire-success');
   const st = document.getElementById('arc-inquire-success-title'); const sl = document.getElementById('arc-inquire-success-lede');
   if (st) st.innerHTML = isReserve ? 'You\u2019re on the <em>List</em>' : 'Inquiry <em>Sent</em>';
-  if (sl) sl.textContent = isReserve ? 'We\u2019ll email you the moment the packages open, with your early-access pricing. Nothing has been charged.' : 'We\u2019ll be in touch within 2 business days to discuss your project and confirm pricing.';
+  if (sl) sl.textContent = isReserve ? 'We\u2019ll email you the day the plans launch. Nothing has been charged.' : 'We\u2019ll be in touch within 2 business days to discuss your project and confirm pricing.';
   ['arc-inquire-phone', 'arc-inquire-city', 'arc-inquire-notes'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   if (formWrap) formWrap.style.display = 'none';
   if (success) success.classList.add('show');

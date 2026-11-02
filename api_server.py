@@ -81,6 +81,9 @@ SESSION_DAYS = 30
 AFFILIATE_SESSION_MINUTES = 30
 
 # Commission products for the affiliate program.
+# Flat program commission applied to every in-app sale (see affiliate_tracking.PROGRAM_RATE).
+AFFILIATE_COMMISSION_RATE = affiliate_tracking.PROGRAM_RATE
+
 AFFILIATE_PRODUCTS = [
     "Design Guide",
     "Architecture Plan",
@@ -287,7 +290,7 @@ def init_db():
             handle TEXT DEFAULT '',
             email TEXT UNIQUE,
             password_hash TEXT,
-            default_rate REAL NOT NULL DEFAULT 10,
+            default_rate REAL NOT NULL DEFAULT 20,
             product_rates TEXT NOT NULL DEFAULT '{}',
             is_admin INTEGER DEFAULT 0,
             active INTEGER DEFAULT 1,
@@ -396,11 +399,11 @@ def seed_owner_account():
 # tab once live; these are starting records with placeholder credentials so
 # the program has data on day one.
 DEFAULT_AFFILIATES = [
-    {"slug": "justice", "name": "Justice", "handle": "@justice", "default_rate": 15, "product_rates": {}},
-    {"slug": "greylo", "name": "Greylo", "handle": "@greylo", "default_rate": 10, "product_rates": {}},
-    {"slug": "erik", "name": "Erik All", "handle": "@erikall", "default_rate": 10, "product_rates": {"Coaching": 5}},
-    {"slug": "damaine", "name": "Damaine Wilson", "handle": "@damainewilson", "default_rate": 10, "product_rates": {}},
-    {"slug": "tayvon", "name": "Tayvon", "handle": "@tayvon", "default_rate": 10, "product_rates": {"Coaching": 8}},
+    {"slug": "justice", "name": "Justice", "handle": "@justice", "default_rate": 20, "product_rates": {}},
+    {"slug": "greylo", "name": "Greylo", "handle": "@greylo", "default_rate": 20, "product_rates": {}},
+    {"slug": "erik", "name": "Erik All", "handle": "@erikall", "default_rate": 20, "product_rates": {}},
+    {"slug": "damaine", "name": "Damaine Wilson", "handle": "@damainewilson", "default_rate": 20, "product_rates": {}},
+    {"slug": "tayvon", "name": "Tayvon", "handle": "@tayvon", "default_rate": 20, "product_rates": {}},
 ]
 
 AFFILIATE_ADMIN_EMAIL = os.environ.get("TRULIFE_AFFILIATE_ADMIN_EMAIL", "justin@trulifeproperties.com").strip().lower()
@@ -427,6 +430,13 @@ def seed_affiliates():
                 [a["slug"], a["name"], a["handle"], a["default_rate"], _json.dumps(a["product_rates"])],
             )
         db.commit()
+    # Flat program commission: normalize any legacy per-affiliate rates so the
+    # stored values match what is actually paid.
+    db.execute(
+        "UPDATE affiliates SET default_rate = ?, product_rates = '{}' WHERE default_rate != ? OR product_rates != '{}'",
+        [AFFILIATE_COMMISSION_RATE, AFFILIATE_COMMISSION_RATE],
+    )
+    db.commit()
     # Ensure the owner/admin has an affiliate-portal login too (full dashboard access).
     if db.execute("SELECT 1 FROM seed_suppression WHERE role='affiliate_admin'").fetchone():
         return
@@ -662,16 +672,18 @@ def affiliate_public(row) -> dict:
         "name": row["name"],
         "handle": row["handle"],
         "email": row["email"],
-        "default_rate": row["default_rate"],
-        "product_rates": _json.loads(row["product_rates"] or "{}"),
+        # Commission is a flat program rate for everyone; legacy per-affiliate
+        # fields are reported as that rate so older clients stay consistent.
+        "default_rate": AFFILIATE_COMMISSION_RATE,
+        "product_rates": {},
+        "program_rate": AFFILIATE_COMMISSION_RATE,
         "is_admin": bool(row["is_admin"]),
     }
 
 
-def affiliate_rate(row, product: str) -> float:
-    import json as _json
-    rates = _json.loads(row["product_rates"] or "{}")
-    return rates.get(product, row["default_rate"])
+def affiliate_rate(row=None, product: str | None = None) -> float:
+    """Flat 20% on every in-app item an affiliate helped sell."""
+    return AFFILIATE_COMMISSION_RATE
 
 
 def mask_email(email: str | None) -> str:
@@ -801,7 +813,7 @@ class NewAffiliateBody(BaseModel):
     handle: str = Field(default="", max_length=100)
     email: str = Field(default="", max_length=254)
     password: str = Field(default="", max_length=200)
-    default_rate: float = Field(default=10, ge=0, le=100)
+    default_rate: float = Field(default=20, ge=0, le=100)  # accepted for compatibility; program rate applies
 
 
 class SaleBody(BaseModel):
@@ -1262,7 +1274,7 @@ def brick_media_token(authorization: str | None = Header(default=None)):
 
 
 class ArcInquiryBody(BaseModel):
-    kind: str = Field(default="inquiry", max_length=32)  # reservation | inquiry | custom
+    kind: str = Field(default="inquiry", max_length=32)  # waitlist | inquiry | custom
     plan: str = Field(default="", max_length=160)
     name: str = Field(default="", max_length=120)
     email: str = Field(default="", max_length=200)
@@ -1273,11 +1285,11 @@ class ArcInquiryBody(BaseModel):
 
 @app.post("/api/arc/inquiries")
 def create_arc_inquiry(body: ArcInquiryBody, authorization: str | None = Header(default=None)):
-    """Architecture plan reservations and inquiries. Stored, then forwarded
-    to the inquiry inbox. No payment is taken here: pre-purchase checkout is
-    added once Justin sets the reservation price."""
+    """Architecture launch-notification requests and plan inquiries. Stored,
+    then forwarded to the inquiry inbox. Architecture is Coming Soon only:
+    no payment or pre-purchase is taken."""
     row = current_user(authorization)
-    kind = body.kind.strip().lower() if body.kind.strip().lower() in ("reservation", "inquiry", "custom") else "inquiry"
+    kind = body.kind.strip().lower() if body.kind.strip().lower() in ("waitlist", "inquiry", "custom") else "inquiry"
     email = (body.email or row["email"] or "").strip().lower()
     name = (body.name or row["name"] or "").strip()
     if not email:
@@ -1289,7 +1301,7 @@ def create_arc_inquiry(body: ArcInquiryBody, authorization: str | None = Header(
     )
     db.commit()
     inquiry_id = cur.lastrowid
-    label = {"reservation": "Early-access reservation", "custom": "Custom consultation request", "inquiry": "Plan inquiry"}[kind]
+    label = {"waitlist": "Launch notification request", "custom": "Custom consultation request", "inquiry": "Plan inquiry"}[kind]
     html = email_service.render_arc_inquiry_email(
         label=label, plan=body.plan.strip(), name=name, email=email, phone=body.phone.strip(),
         city=body.city.strip(), notes=body.notes.strip(), account_email=row["email"],
@@ -1695,7 +1707,7 @@ def affiliate_admin_create(body: NewAffiliateBody, authorization: str | None = H
     cur = db.execute(
         "INSERT INTO affiliates (slug, name, handle, email, password_hash, default_rate, product_rates) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [slug, body.name.strip(), body.handle.strip(), email, pw_hash, body.default_rate, _json.dumps({})],
+        [slug, body.name.strip(), body.handle.strip(), email, pw_hash, AFFILIATE_COMMISSION_RATE, _json.dumps({})],
     )
     db.commit()
     row = db.execute("SELECT * FROM affiliates WHERE id = ?", [cur.lastrowid]).fetchone()
@@ -1704,24 +1716,16 @@ def affiliate_admin_create(body: NewAffiliateBody, authorization: str | None = H
 
 @app.put("/api/affiliate/list/{affiliate_id}/rates")
 def affiliate_admin_update_rates(affiliate_id: int, body: AffiliateRatesBody, authorization: str | None = Header(default=None)):
-    import json as _json
     me = current_affiliate(authorization)
     if not me["is_admin"]:
         raise HTTPException(403, "Admin access required")
     row = db.execute("SELECT * FROM affiliates WHERE id = ?", [affiliate_id]).fetchone()
     if not row:
         raise HTTPException(404, "Affiliate not found")
-    default_rate = body.default_rate if body.default_rate is not None else row["default_rate"]
-    product_rates = body.product_rates if body.product_rates is not None else _json.loads(row["product_rates"] or "{}")
-    if any(not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 100 for v in product_rates.values()):
-        raise HTTPException(400, "Product rates must be numbers between 0 and 100")
-    db.execute(
-        "UPDATE affiliates SET default_rate = ?, product_rates = ? WHERE id = ?",
-        [default_rate, _json.dumps(product_rates), affiliate_id],
+    raise HTTPException(
+        409,
+        f"Commission is a flat {AFFILIATE_COMMISSION_RATE:g}% program rate on every in-app sale and is not set per affiliate.",
     )
-    db.commit()
-    updated = db.execute("SELECT * FROM affiliates WHERE id = ?", [affiliate_id]).fetchone()
-    return affiliate_public(updated)
 
 
 @app.put("/api/affiliate/list/{affiliate_id}/credentials")

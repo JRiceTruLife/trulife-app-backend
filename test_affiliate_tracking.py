@@ -140,9 +140,9 @@ class ReferralTests(unittest.TestCase):
             with api.db:
                 tracking.apply_verified_refund(api.db, payment_reference=session["payment_intent"], refunded_cents=cents)
         row = self.client.get("/api/affiliate/sales", headers=self.ah).json()[0]
-        self.assertEqual(row["rate"], 10)
+        self.assertEqual(row["rate"], 20)  # flat program rate, unaffected by legacy per-affiliate values
         self.assertEqual(row["refunded_amount"], 100)
-        self.assertAlmostEqual(row["commission"], 39.7)
+        self.assertAlmostEqual(row["commission"], 79.4)
         with api.db:
             tracking.apply_verified_refund(api.db, payment_reference=session["payment_intent"], refunded_cents=49700)
         self.assertEqual(self.client.get("/api/affiliate/overview", headers=self.ah).json()["totals"]["commission"], 0)

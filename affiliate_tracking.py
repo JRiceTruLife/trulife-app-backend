@@ -6,6 +6,16 @@ Amounts in the purchase ledger are integer minor units (USD cents).
 """
 import datetime
 import json
+import os
+
+# Program rule (Justin, Nov 2 2026): every affiliate earns a flat 20% of each
+# in-app item they helped sell — 5 Step Method, Design Guides, Brick by Brick
+# modules, anything sold through the app. Per-affiliate / per-product rates
+# are no longer used; each sale still stores a rate_snapshot so historical
+# rows keep the rate that applied when they were recorded.
+PROGRAM_RATE = float(os.environ.get("TRULIFE_AFFILIATE_RATE", "20"))
+if not 0 <= PROGRAM_RATE <= 100:
+    raise RuntimeError("TRULIFE_AFFILIATE_RATE must be between 0 and 100")
 
 
 def migrate(conn):
@@ -91,9 +101,7 @@ def record_verified_purchase(conn, *, provider, transaction_id, user_id,
         conn.execute("UPDATE purchase_ledger SET refunded_cents=? WHERE id=?", (refunded_cents, purchase_id))
     if not aff or amount_cents == 0:
         return {"purchase_id": purchase_id, "affiliate_id": None}
-    rate = float(json.loads(aff["product_rates"] or "{}").get(category, aff["default_rate"]))
-    if not 0 <= rate <= 100:
-        raise ValueError("Invalid commission rate")
+    rate = float(PROGRAM_RATE)
     # Retain compatibility with historical Stripe rows when backfilling a receipt.
     prior = conn.execute(
         "SELECT id FROM affiliate_sales WHERE stripe_session_id=? ORDER BY id LIMIT 1",
@@ -142,7 +150,7 @@ def net_sale(row):
     return max(0, row["amount"] - (row["refunded_amount"] or 0))
 
 
-def sale_rate(row, affiliate):
+def sale_rate(row, affiliate=None):
     if row["rate_snapshot"] is not None:
         return row["rate_snapshot"]
-    return json.loads(affiliate["product_rates"] or "{}").get(row["product"], affiliate["default_rate"])
+    return PROGRAM_RATE

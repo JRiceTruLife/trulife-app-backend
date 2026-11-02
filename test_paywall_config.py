@@ -82,14 +82,14 @@ class PaywallConfigTests(unittest.TestCase):
         api_server.db.commit()
         self.assertEqual(self.client.get("/api/brick/media-token", headers={"Authorization": f"Bearer {member_token}"}).status_code, 200)
 
-    def test_architecture_reservation_is_stored(self):
+    def test_architecture_waitlist_request_is_stored(self):
         res = self.client.post("/api/auth/signup", json={"email": "reserver@example.com", "password": "Reserve!2026x", "name": "Reserver"})
         token = res.json()["token"]
-        self.assertEqual(self.client.post("/api/arc/inquiries", json={"kind": "reservation", "plan": "Ivy Trails"}).status_code, 401)
-        res = self.client.post("/api/arc/inquiries", json={"kind": "reservation", "plan": "Ivy Trails — Early Access Reservation", "city": "Tampa, FL"},
+        self.assertEqual(self.client.post("/api/arc/inquiries", json={"kind": "waitlist", "plan": "Ivy Trails"}).status_code, 401)
+        res = self.client.post("/api/arc/inquiries", json={"kind": "waitlist", "plan": "Ivy Trails — Launch Notification", "city": "Tampa, FL"},
                                headers={"Authorization": f"Bearer {token}"})
         self.assertEqual(res.status_code, 200, res.text)
-        self.assertEqual(res.json()["kind"], "reservation")
+        self.assertEqual(res.json()["kind"], "waitlist")
         row = api_server.db.execute("SELECT * FROM arc_inquiries WHERE id = ?", [res.json()["id"]]).fetchone()
         self.assertEqual(row["email"], "reserver@example.com")  # prefilled from the account
         self.assertEqual(row["name"], "Reserver")
@@ -97,6 +97,22 @@ class PaywallConfigTests(unittest.TestCase):
         # Unknown kinds fall back to a plain inquiry rather than erroring.
         res = self.client.post("/api/arc/inquiries", json={"kind": "weird", "plan": "X"}, headers={"Authorization": f"Bearer {token}"})
         self.assertEqual(res.json()["kind"], "inquiry")
+
+    def test_affiliate_commission_is_flat_twenty_percent(self):
+        import affiliate_tracking
+        self.assertEqual(affiliate_tracking.PROGRAM_RATE, 20)
+        self.assertEqual(api_server.AFFILIATE_COMMISSION_RATE, 20)
+        # Legacy per-affiliate values are ignored and normalized at startup.
+        api_server.db.execute("UPDATE affiliates SET default_rate = 5, product_rates = '{\"Design Guide\": 50}'")
+        api_server.db.commit()
+        api_server.seed_affiliates()
+        rows = api_server.db.execute("SELECT default_rate, product_rates FROM affiliates").fetchall()
+        self.assertTrue(rows)
+        self.assertTrue(all(r["default_rate"] == 20 and r["product_rates"] == "{}" for r in rows))
+        aff = api_server.db.execute("SELECT * FROM affiliates LIMIT 1").fetchone()
+        for product in api_server.AFFILIATE_PRODUCTS:
+            self.assertEqual(api_server.affiliate_rate(aff, product), 20)
+        self.assertEqual(api_server.affiliate_public(aff)["program_rate"], 20)
 
 
 if __name__ == "__main__":
