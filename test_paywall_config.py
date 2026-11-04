@@ -8,6 +8,7 @@ _tmp = tempfile.TemporaryDirectory()
 os.environ["TRULIFE_DB_PATH"] = _tmp.name + "/test.db"
 os.environ["TRULIFE_ENV"] = "development"
 os.environ["TRULIFE_PAYWALL_ENABLED"] = "true"
+os.environ["TRULIFE_STAFF_EMAILS"] = "media@trulifeproperties.com, Second.Staff@Example.com"
 
 from fastapi.testclient import TestClient
 import api_server
@@ -32,6 +33,17 @@ class PaywallConfigTests(unittest.TestCase):
         token = res.json()["token"]
         guides = self.client.get("/api/guides", headers={"Authorization": f"Bearer {token}"}).json()
         self.assertTrue(guides and all(g["purchased"] for g in guides))
+
+    def test_staff_account_gets_owner_access(self):
+        res = self.client.post("/api/auth/signup", json={"email": "Media@TruLifeProperties.com", "password": "Media!2026xyz", "name": "Media Team"})
+        self.assertEqual(res.status_code, 201, res.text)
+        self.assertTrue(res.json()["user"]["is_owner"])
+        token = res.json()["token"]
+        guides = self.client.get("/api/guides", headers={"Authorization": f"Bearer {token}"}).json()
+        self.assertTrue(guides and all(g["purchased"] for g in guides))
+        # Staff can mint the protected course media token like the owner.
+        mt = self.client.get("/api/brick/media-token", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(mt.status_code, 200, mt.text)
 
     def test_regular_member_has_nothing_purchased(self):
         res = self.client.post("/api/auth/signup", json={"email": "member@example.com", "password": "Member!2026x", "name": "Member"})

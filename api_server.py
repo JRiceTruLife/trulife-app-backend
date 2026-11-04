@@ -372,6 +372,28 @@ def init_db():
 # Set via env vars so the password isn't hardcoded in source; falls back to a
 # dev default for local/preview testing. Rotate OWNER_PASSWORD before real launch.
 OWNER_EMAIL = os.environ.get("TRULIFE_OWNER_EMAIL", "justin@trulifeproperties.com").strip().lower()
+
+# Staff accounts (content/media team) get the same full-access rights as the
+# owner account: every course, guide, and module is unlocked regardless of
+# purchases. Comma-separated emails in TRULIFE_STAFF_EMAILS. Evaluated at
+# request time, so adding an email takes effect on the next login without
+# a database migration.
+STAFF_EMAILS = frozenset(
+    e.strip().lower()
+    for e in os.environ.get("TRULIFE_STAFF_EMAILS", "").split(",")
+    if e.strip()
+)
+
+
+def account_is_owner(row) -> bool:
+    """True for the owner account and any configured staff account."""
+    if not row:
+        return False
+    if row["is_owner"]:
+        return True
+    return (row["email"] or "").strip().lower() in STAFF_EMAILS
+
+
 OWNER_PASSWORD = _require_secret("TRULIFE_OWNER_PASSWORD", "TruLife2026!")
 OWNER_NAME = os.environ.get("TRULIFE_OWNER_NAME", "Justin Rice")
 
@@ -631,7 +653,7 @@ def user_public(row) -> dict:
         "email": row["email"],
         "name": row["name"],
         "phone": row["phone"],
-        "is_owner": bool(row["is_owner"]),
+        "is_owner": account_is_owner(row),
     }
 
 
@@ -1243,7 +1265,7 @@ def comps_lookup(body: CompsSearchBody, request: Request):
 @app.get("/api/guides")
 def list_guides(authorization: str | None = Header(default=None)):
     row = current_user(authorization)
-    if row["is_owner"]:
+    if account_is_owner(row):
         # Owner accounts see everything unlocked without needing purchase records.
         return [{**g, "purchased": True} for g in GUIDE_CATALOG]
     owned = {
@@ -1254,7 +1276,7 @@ def list_guides(authorization: str | None = Header(default=None)):
 
 
 def user_owns_guide(row, guide_id: str) -> bool:
-    if row["is_owner"]:
+    if account_is_owner(row):
         return True
     return db.execute(
         "SELECT 1 FROM guide_purchases WHERE user_id = ? AND guide_id = ?", [row["id"], guide_id]
@@ -1317,7 +1339,7 @@ def unlock_guide(body: UnlockBody, authorization: str | None = Header(default=No
     so the owner account can comp a guide for a customer (refund goodwill,
     support issue, etc.) without needing database access."""
     row = current_user(authorization)
-    if not row["is_owner"]:
+    if not account_is_owner(row):
         raise HTTPException(403, "Only the owner account can use manual unlock.")
     if body.admin_key != ADMIN_KEY:
         raise HTTPException(403, "Invalid admin key")
@@ -1345,7 +1367,7 @@ def create_guide_checkout(body: CheckoutBody, authorization: str | None = Header
     already_owned = db.execute(
         "SELECT 1 FROM guide_purchases WHERE user_id = ? AND guide_id = ?", [row["id"], guide["id"]]
     ).fetchone()
-    if already_owned or row["is_owner"]:
+    if already_owned or account_is_owner(row):
         raise HTTPException(400, "You already own this guide.")
     base = APP_BASE_URL or ""
     try:
