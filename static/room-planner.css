@@ -140,3 +140,26 @@
 .rp-grant-row small { display: block; font-size: 0.78rem; color: #4b5563; word-break: break-all; }
 @media (max-width: 640px) { .rp-grant-form { grid-template-columns: 1fr; } }
 .rp-grant-form .field { margin: 0; }
+
+/* Phones: keep the sticky sketch and submit bar compact so there's room to type. */
+@media (max-width: 640px) {
+  .rp-sketch { padding: 10px 12px; }
+  .rp-sketch-head { margin-bottom: 4px; }
+  .rp-canvas svg { max-height: 22vh; }
+  .rp-stats { gap: 6px; margin-top: 6px; }
+  .rp-stat { padding: 5px 8px; }
+  .rp-submit-bar { padding: 10px 12px; gap: 10px; }
+  .rp-submit-bar > div { display: none; }
+  .rp-submit-bar .btn { width: 100%; }
+}
+@media (max-width: 560px) {
+  .rp-walls thead { display: none; }
+  .rp-walls, .rp-walls tbody { display: block; }
+  .rp-walls tr { display: grid; grid-template-columns: 40px 1fr 1fr 32px; grid-template-areas: "lbl ft in x" "lbl dir dir x"; gap: 6px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--light-gray); }
+  .rp-walls td { padding: 0; }
+  .rp-walls td:nth-child(1) { grid-area: lbl; align-self: start; }
+  .rp-walls td:nth-child(2) { grid-area: ft; }
+  .rp-walls td:nth-child(3) { grid-area: in; }
+  .rp-walls td:nth-child(4) { grid-area: dir; }
+  .rp-walls td:nth-child(5) { grid-area: x; align-self: start; }
+}

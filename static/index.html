@@ -6,7 +6,7 @@
 <title>Tru Life · Investor App</title>
 <meta name="description" content="The Tru Life Properties operator app — deal analyzer, comps engine, 5 Step Method project tracker, and Brick by Brick course library." />
 <link rel="icon" type="image/svg+xml" href="icon.svg" />
-<link rel="stylesheet" href="/room-planner.css?v=2" />
+<link rel="stylesheet" href="/room-planner.css?v=3" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Unna:ital,wght@0,400;0,700;1,400;1,700&family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
@@ -8883,7 +8883,9 @@ function logout() {
 // (guides, saved deals, comps history, profile) once the rest of the app's
 // functions further down this script have been defined.
 let _authReadyQueue = [];
+let _authBooted = false;
 async function onAuthReady() {
+  _authBooted = true;
   for (const fn of _authReadyQueue) {
     try { await fn(); } catch (e) { console.error(e); }
   }
@@ -8894,6 +8896,22 @@ function onceAuthed(fn) {
 }
 
 bootstrapAuth();
+
+// Direct link: /?open=room-planner opens the Room Planner (after sign-in if
+// needed). Only allow-listed screens; the param is removed from the URL.
+(function openFromLink() {
+  const DEEP_LINK_SCREENS = new Set(['room-planner']);
+  const params = new URLSearchParams(window.location.search);
+  const target = params.get('open');
+  if (!target || !DEEP_LINK_SCREENS.has(target)) return;
+  params.delete('open');
+  const qs = params.toString();
+  window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : '') + window.location.hash);
+  // Wait for the page (and room-planner.js) to finish loading, then for the
+  // session check, so go() sees the signed-in user.
+  const whenAuthed = () => { if (_authBooted) go(target); else _authReadyQueue.push(() => go(target)); };
+  if (document.readyState === 'complete') whenAuthed(); else window.addEventListener('load', whenAuthed, { once: true });
+})();
 
 // Detect a ?ref=<slug> affiliate link on first load and log the click via
 // the public, no-auth endpoint. Fails silently — this must never block or
@@ -12272,6 +12290,6 @@ if (new URLSearchParams(window.location.search).get('account') === 'delete') {
 }
 </script>
 
-<script src="/room-planner.js?v=2" defer></script>
+<script src="/room-planner.js?v=3" defer></script>
 </body>
 </html>
