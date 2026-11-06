@@ -809,6 +809,8 @@ class CompsSearchBody(BaseModel):
 class UnlockBody(BaseModel):
     guide_id: str = Field(max_length=100)
     admin_key: str = Field(max_length=200)
+    # Optional: email of the member to comp. Defaults to the calling account.
+    email: str | None = Field(default=None, max_length=200)
 
 
 class CheckoutBody(BaseModel):
@@ -1345,12 +1347,19 @@ def unlock_guide(body: UnlockBody, authorization: str | None = Header(default=No
         raise HTTPException(403, "Invalid admin key")
     if body.guide_id not in {g["id"] for g in GUIDE_CATALOG}:
         raise HTTPException(404, "Unknown guide")
+    target = row
+    if body.email and body.email.strip().lower() != (row["email"] or "").lower():
+        target = db.execute(
+            "SELECT * FROM users WHERE lower(email) = ?", [body.email.strip().lower()]
+        ).fetchone()
+        if not target:
+            raise HTTPException(404, "No member with that email")
     db.execute(
         "INSERT OR IGNORE INTO guide_purchases (user_id, guide_id, unlocked_by) VALUES (?, ?, 'admin')",
-        [row["id"], body.guide_id],
+        [target["id"], body.guide_id],
     )
     db.commit()
-    return {"guide_id": body.guide_id, "purchased": True}
+    return {"guide_id": body.guide_id, "purchased": True, "email": target["email"]}
 
 
 @app.post("/api/guides/checkout")

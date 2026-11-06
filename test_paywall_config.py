@@ -45,6 +45,18 @@ class PaywallConfigTests(unittest.TestCase):
         mt = self.client.get("/api/brick/media-token", headers={"Authorization": f"Bearer {token}"})
         self.assertEqual(mt.status_code, 200, mt.text)
 
+    def test_owner_can_comp_another_member(self):
+        member = self.client.post("/api/auth/signup", json={"email": "comp-me@example.com", "password": "CompPass!2026", "name": "Comp Me"}).json()
+        owner = self.client.post("/api/auth/login", json={"email": "justin@trulifeproperties.com", "password": "TruLife2026!"}).json()
+        res = self.client.post("/api/guides/unlock", json={"guide_id": "fix-flip", "admin_key": "trulife-admin-2026", "email": "Comp-Me@example.com"}, headers={"Authorization": f"Bearer {owner['token']}"})
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["email"], "comp-me@example.com")
+        guides = self.client.get("/api/guides", headers={"Authorization": f"Bearer {member['token']}"}).json()
+        self.assertTrue(next(g for g in guides if g["id"] == "fix-flip")["purchased"])
+        self.assertFalse(next(g for g in guides if g["id"] == "linder")["purchased"])
+        missing = self.client.post("/api/guides/unlock", json={"guide_id": "fix-flip", "admin_key": "trulife-admin-2026", "email": "nobody@example.com"}, headers={"Authorization": f"Bearer {owner['token']}"})
+        self.assertEqual(missing.status_code, 404)
+
     def test_regular_member_has_nothing_purchased(self):
         res = self.client.post("/api/auth/signup", json={"email": "member@example.com", "password": "Member!2026x", "name": "Member"})
         self.assertEqual(res.status_code, 201, res.text)
