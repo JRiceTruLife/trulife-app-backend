@@ -2460,6 +2460,18 @@ body {
   .aff-topbar { flex-wrap: wrap; gap: 10px; }
 }
 
+/* Store-app mode: inside the Android / iOS shell (Capacitor) the app may not
+   show prices or sell digital content (Apple 3.1.1, Google Play Billing).
+   Purchases happen on the website; the shell only lets members sign in. */
+.store-app .fs-paywall-price, .store-app .dz-paywall-price,
+.store-app .fs-paywall-cta, .store-app .dz-paywall-cta,
+.store-app .fs-paywall-note, .store-app .dz-paywall-note { display: none !important; }
+.shell-access { display: none; }
+.store-app .shell-access { display: block; margin-top: 8px; }
+.shell-access p { color: #5a5e72; font-size: 0.9rem; margin: 0 0 12px; }
+.shell-access-cta { display: inline-block; padding: 13px 30px; background: var(--navy); color: var(--white); border: none; border-radius: 10px; font-weight: 700; font-size: 0.88rem; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; }
+.shell-access-cta:hover { background: var(--gold); }
+.store-app .dz-price.dz-price-paid { font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
 </style>
 </head>
 <body>
@@ -8146,6 +8158,7 @@ function hideAuthGate() {
 function applyUserToChrome(user) {
   if (currentUser?.id !== user.id) clearAccountWorkspace();
   currentUser = user;
+  if (typeof applyShellState === 'function') applyShellState();
   const nameEl = document.querySelector('.sidebar-footer .user-meta .name');
   const avatarEl = document.querySelector('.sidebar-footer .avatar');
   const displayName = (user.name && user.name.trim()) || user.email;
@@ -8843,6 +8856,7 @@ function resetChromeToGuest() {
 function logout() {
   setAuthToken(null);
   currentUser = null;
+  if (typeof applyShellState === 'function') applyShellState();
   clearAccountWorkspace();
   _pendingScreen = null;
   resetChromeToGuest();
@@ -9020,6 +9034,49 @@ document.querySelectorAll('[data-arc-back]').forEach(b => {
 // override can only turn gates on — never off.
 let PAYWALL_ENABLED = false;
 let PAYMENTS_READY = false;
+// IN_STORE_APP: true when the page runs inside the Android / iOS store shell
+// (Capacitor bridge present or the shell's user-agent tag). Prices and
+// checkout are hidden there; members just sign in. ?shell=1 previews it in
+// a normal browser (sticky for the tab), ?shell=0 clears.
+let IN_STORE_APP = false;
+(function detectStoreShell() {
+  try {
+    const q = new URLSearchParams(window.location.search).get('shell');
+    if (q && /^(1|on|true)$/i.test(q)) sessionStorage.setItem('trulife.shell.preview', '1');
+    if (q && /^(0|off|false)$/i.test(q)) sessionStorage.removeItem('trulife.shell.preview');
+    const cap = window.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) IN_STORE_APP = true;
+    if (/TruLifeApp\//.test(navigator.userAgent || '')) IN_STORE_APP = true;
+    if (sessionStorage.getItem('trulife.shell.preview') === '1') IN_STORE_APP = true;
+  } catch (_) {}
+  if (IN_STORE_APP) document.documentElement.classList.add('store-app');
+})();
+function shellAccessHtml() {
+  // Replaces price + Unlock button inside the store shell. No prices, no
+  // external purchase links (store policy); members sign in to access.
+  return '<div class="shell-access">' +
+    '<p class="shell-access-signed-out">Already a member? Sign in to access everything on your account.</p>' +
+    '<p class="shell-access-signed-in">This item isn\'t on your account yet. Everything you own appears here as soon as you\'re signed in.</p>' +
+    '<button type="button" class="shell-access-cta">Sign In</button>' +
+    '</div>';
+}
+function applyShellState() {
+  if (!IN_STORE_APP) return;
+  document.body.classList.add('store-app');
+  const signedIn = !!currentUser;
+  document.querySelectorAll('.shell-access-signed-out').forEach(el => { el.style.display = signedIn ? 'none' : ''; });
+  document.querySelectorAll('.shell-access-signed-in').forEach(el => { el.style.display = signedIn ? '' : 'none'; });
+  document.querySelectorAll('.shell-access-cta').forEach(el => { el.style.display = signedIn ? 'none' : ''; });
+  document.querySelectorAll('.dz-price').forEach(el => {
+    if (/^\$\d/.test(el.textContent.trim())) { el.textContent = 'Members'; el.classList.add('dz-price-paid'); }
+  });
+}
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.shell-access-cta');
+  if (!btn) return;
+  e.preventDefault();
+  if (typeof showAuthGate === 'function') showAuthGate('login');
+});
 (function paywallPreviewOverride() {
   try {
     const q = new URLSearchParams(window.location.search).get('paywall');
@@ -9037,6 +9094,7 @@ function applyPaywallState() {
   if (fs && fs.dataset.paywallReady === '1') fs.classList.toggle('fs-unlocked', fsIsUnlocked());
   if (typeof bbbApplyLockState === 'function') bbbApplyLockState();
   document.body.classList.toggle('paywall-on', PAYWALL_ENABLED);
+  applyShellState();
 }
 async function loadPaywallConfig() {
   try {
@@ -11042,7 +11100,8 @@ function ensurePaywall(detail, name) {
     '<p class="dz-paywall-lede">Full vendor list, exact paint codes, fixture SKUs and pricing &mdash; ready to send to your team.</p>' +
     '<div class="dz-paywall-price">$' + TPL_PRICES[name] + '<small>One-time &middot; Lifetime access</small></div>' +
     '<button type="button" class="dz-paywall-cta" data-tpl-unlock="' + name + '">Unlock Template</button>' +
-    '<p class="dz-paywall-note">Preview video above is free. Spec sheets unlock instantly on purchase.</p>';
+    '<p class="dz-paywall-note">Preview video above is free. Spec sheets unlock instantly on purchase.</p>' +
+    shellAccessHtml();
   const locked = document.createElement('div');
   locked.className = 'dz-locked';
   tail.forEach(el => locked.appendChild(el));
@@ -11052,6 +11111,7 @@ function ensurePaywall(detail, name) {
   detail.dataset.paywallReady = '1';
   // Unlock click handler
   paywall.querySelector('[data-tpl-unlock]').addEventListener('click', async () => {
+    if (IN_STORE_APP) return;
     const ok = window.confirm('Unlock the ' + lbl.eyebrow + ' template for $' + TPL_PRICES[name] + '?\n\nYou\'ll be taken to a secure Stripe checkout page to complete payment.');
     if (!ok) return;
     const unlocked = await tplUnlock(name);
@@ -11138,7 +11198,8 @@ async function fsUnlock() {
     '</div>' +
     '<div class="fs-paywall-price">$' + FS_PRICE + '<small>One-time &middot; Lifetime access</small></div>' +
     '<button type="button" class="fs-paywall-cta" id="fs-unlock-btn">Unlock Access</button>' +
-    '<p class="fs-paywall-note">Includes every future update to the 5 Step Method module.</p>';
+    '<p class="fs-paywall-note">Includes every future update to the 5 Step Method module.</p>' +
+    shellAccessHtml();
   // Locked content holder
   const locked = document.createElement('div');
   locked.className = 'fs-locked';
@@ -11153,6 +11214,7 @@ async function fsUnlock() {
   screen.dataset.paywallReady = '1';
   // Wire unlock
   paywall.querySelector('#fs-unlock-btn').addEventListener('click', async () => {
+    if (IN_STORE_APP) return;
     const ok = window.confirm('Unlock the 5 Step Method for $' + FS_PRICE + '?\n\nYou\'ll be taken to a secure Stripe checkout page to complete payment.');
     if (!ok) return;
     const unlocked = await fsUnlock();
@@ -11717,7 +11779,8 @@ async function bbbUnlock() {
     '</div>' +
     '<div class="fs-paywall-price">$' + BBB_PRICE + '<small>One-time &middot; Lifetime access</small></div>' +
     '<button type="button" class="fs-paywall-cta" id="bbb-unlock-btn">Unlock the Course</button>' +
-    '<p class="fs-paywall-note">Secure checkout by Stripe. Access is tied to your Tru Life login on every device.</p>';
+    '<p class="fs-paywall-note">Secure checkout by Stripe. Access is tied to your Tru Life login on every device.</p>' +
+    shellAccessHtml();
   const locked = document.createElement('div');
   locked.className = 'bbb-locked';
   track.parentNode.insertBefore(wrap, track);
@@ -11726,6 +11789,7 @@ async function bbbUnlock() {
   wrap.appendChild(locked);
   screen.dataset.paywallReady = '1';
   paywall.querySelector('#bbb-unlock-btn').addEventListener('click', () => {
+    if (IN_STORE_APP) return;
     if (window.confirm('Unlock Brick by Brick: Fix & Flip Foundations for $' + BBB_PRICE + '?\n\nYou\'ll be taken to a secure Stripe checkout page to complete payment.')) bbbUnlock();
   });
 })();
