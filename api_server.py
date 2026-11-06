@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 import email_service
 import affiliate_tracking
+import room_planner
 
 # TRULIFE_DB_PATH lets production hosting (e.g. a mounted persistent disk)
 # point the database somewhere durable. Falls back to a local file for dev/preview.
@@ -317,6 +318,34 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- Room Planner (Floor Plan Measurement Form) submissions. Sent only
+        -- to the fixed back-office inbox; photos/sketches are kept on disk
+        -- next to the database under room_planner_uploads/<id>/.
+        -- Room Planner access granted by owner/staff to a client who paid
+        -- for architecture drawings outside the app. Revoking keeps the row.
+        CREATE TABLE IF NOT EXISTS room_planner_grants (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            granted_by TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            revoked_at TIMESTAMP,
+            revoked_by TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS room_plan_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            reference TEXT UNIQUE NOT NULL,
+            client_ref TEXT,
+            payload TEXT NOT NULL,
+            photo_files TEXT NOT NULL DEFAULT '[]',
+            sketch_files TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'received',
+            email_attempts INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, client_ref)
+        );
+
         CREATE TABLE IF NOT EXISTS affiliate_payouts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             affiliate_id INTEGER NOT NULL REFERENCES affiliates(id) ON DELETE CASCADE,
@@ -576,7 +605,8 @@ _MAX_BODY_BYTES = 256 * 1024
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
     content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > _MAX_BODY_BYTES:
+    limit = room_planner.MAX_SUBMIT_BODY_BYTES if request.url.path == "/api/room-planner/submit" else _MAX_BODY_BYTES
+    if content_length and content_length.isdigit() and int(content_length) > limit:
         from fastapi.responses import JSONResponse
         return JSONResponse(status_code=413, content={"detail": "Request body too large"})
     return await call_next(request)
@@ -607,6 +637,8 @@ RATE_LIMITS = {
     # RentCast API usage is metered on our plan — cap live comps lookups
     # per-IP so one user (or a bot) can't burn the monthly request quota.
     "comps_lookup": (12, 3600),
+    # Room Planner submissions carry photos and send an email each time.
+    "room_planner_submit": (6, 3600),
 }
 
 
@@ -1089,6 +1121,11 @@ def delete_account(body: DeleteAccountBody, request: Request,
         conn.execute("BEGIN IMMEDIATE")
         for table in ("saved_deals", "comps_history", "password_reset_codes", "account_state", "guide_purchases"):
             conn.execute(f"DELETE FROM {table} WHERE user_id=?", [user["id"]])
+        # Room Planner copies stored in the app (the back-office email copy is
+        # a business record outside the app and is not affected).
+        rp_ids = [r["id"] for r in conn.execute("SELECT id FROM room_plan_submissions WHERE user_id=?", [user["id"]]).fetchall()]
+        conn.execute("DELETE FROM room_plan_submissions WHERE user_id=?", [user["id"]])
+        conn.execute("DELETE FROM room_planner_grants WHERE user_id=?", [user["id"]])
         # Keep transaction identifiers for disputes/refunds, without an active account.
         conn.execute("UPDATE checkout_sessions SET status='account_deleted' "
                      "WHERE user_id=? AND status!='completed'", [user["id"]])
@@ -1104,6 +1141,8 @@ def delete_account(body: DeleteAccountBody, request: Request,
                          "password_hash=NULL,active=0,is_admin=0,slug=? WHERE id=?",
                          ["deleted-" + uuid.uuid4().hex, aid])
         conn.execute("DELETE FROM users WHERE id=?", [user["id"]])
+    for rp_id in rp_ids:
+        _rp_remove_files(rp_id)
     return {"ok": True, "message": "Account deleted. Required financial records are retained as explained in the privacy policy."}
 
 @app.get("/api/deals")
@@ -1332,6 +1371,254 @@ def create_arc_inquiry(body: ArcInquiryBody, authorization: str | None = Header(
     )
     email_service.send_email(to=INQUIRY_EMAIL, subject=f"[Architecture] {label}: {body.plan.strip() or 'General'}", html=html)
     return {"ok": True, "id": inquiry_id, "kind": kind}
+
+
+# ---------- Room Planner (Floor Plan Measurement Form) ----------
+# Only clients who paid for architecture drawings (verified in-app purchase,
+# or an owner/staff grant for drawings paid outside the app) plus the owner/
+# staff accounts can use it. Submissions go only to room_planner.ROOM_PLANNER_EMAIL.
+_RP_UPLOAD_DIR = os.path.join(os.path.dirname(DB_PATH) or ".", "room_planner_uploads")
+
+
+class RoomPlanPhoto(BaseModel):
+    label: str = Field(default="", max_length=80)
+    data_url: str = Field(max_length=6 * 1024 * 1024)
+
+
+class RoomPlanSketch(BaseModel):
+    floor: str = Field(default="", max_length=40)
+    png: str = Field(max_length=3 * 1024 * 1024)
+
+
+class RoomPlanSubmitBody(BaseModel):
+    client_ref: str = Field(min_length=8, max_length=64)
+    client: dict = Field(default_factory=dict)
+    front_faces: str = Field(default="", max_length=4)
+    walls: list[dict] = Field(default_factory=list, max_length=room_planner.MAX_WALLS)
+    rooms: list[dict] = Field(default_factory=list, max_length=room_planner.MAX_ROOMS)
+    fixed_elements: str = Field(default="", max_length=3000)
+    ceiling_heights: str = Field(default="", max_length=500)
+    comments: str = Field(default="", max_length=3000)
+    photos: list[RoomPlanPhoto] = Field(default_factory=list, max_length=room_planner.MAX_PHOTOS)
+    sketches: list[RoomPlanSketch] = Field(default_factory=list, max_length=room_planner.MAX_SKETCHES)
+
+
+def room_planner_allowed(row) -> bool:
+    if account_is_owner(row):
+        return True
+    return room_planner.access_reason(db, row["id"]) is not None
+
+
+def _rp_remove_files(submission_id: int):
+    import shutil
+    folder = os.path.join(_RP_UPLOAD_DIR, str(int(submission_id)))
+    shutil.rmtree(folder, ignore_errors=True)
+
+
+def _rp_safe_name(label: str, idx: int, ext: str) -> str:
+    base = re.sub(r"[^A-Za-z0-9]+", "-", label or "").strip("-")[:40] or "photo"
+    return f"{idx:02d}-{base}.{ext}"
+
+
+def _rp_send_backoffice_email(submission_id: int) -> bool:
+    import base64
+    row = db.execute("SELECT * FROM room_plan_submissions WHERE id=?", [submission_id]).fetchone()
+    if not row:
+        return False
+    sub = json.loads(row["payload"])
+    summary = room_planner.measurements_summary(sub)
+    folder = os.path.join(_RP_UPLOAD_DIR, str(submission_id))
+    attachments, photo_labels = [], []
+    for f in json.loads(row["sketch_files"]) + json.loads(row["photo_files"]):
+        path = os.path.join(folder, f["file"])
+        if not os.path.isfile(path):
+            continue
+        with open(path, "rb") as fh:
+            attachments.append({"filename": f["file"], "content": base64.b64encode(fh.read()).decode()})
+        if f.get("kind") == "photo":
+            photo_labels.append(f.get("label") or f["file"])
+    account = db.execute("SELECT email FROM users WHERE id=?", [row["user_id"]]).fetchone() if row["user_id"] else None
+    html = room_planner.render_submission_email(
+        submission_id=submission_id, reference=row["reference"], sub=sub, summary=summary,
+        account_email=account["email"] if account else "", photo_labels=photo_labels,
+        sketch_count=len(json.loads(row["sketch_files"])),
+    )
+    c = sub["client"]
+    ok = email_service.send_email(
+        to=room_planner.ROOM_PLANNER_EMAIL,
+        subject=f"[Room Planner] {c['name']} — {c['address']} ({row['reference']})",
+        html=html, attachments=attachments,
+    )
+    db.execute("UPDATE room_plan_submissions SET status=?, email_attempts=email_attempts+1 WHERE id=?",
+               ["sent" if ok else "email_failed", submission_id])
+    db.commit()
+    return ok
+
+
+@app.get("/api/room-planner/access")
+def room_planner_access(authorization: str | None = Header(default=None)):
+    row = current_user(authorization)
+    is_staff = account_is_owner(row)
+    reason = "owner" if is_staff else (room_planner.access_reason(db, row["id"]) or "architecture_required")
+    return {
+        "allowed": reason != "architecture_required",
+        "reason": reason,
+        "can_grant": is_staff,
+        "submits_to": "Tru Life Properties back office",
+    }
+
+
+@app.post("/api/room-planner/submit", status_code=201)
+def room_planner_submit(body: RoomPlanSubmitBody, request: Request, authorization: str | None = Header(default=None)):
+    row = current_user(authorization)
+    if not room_planner_allowed(row):
+        raise HTTPException(403, "The Room Planner opens once you've paid for architecture drawings.")
+    existing = db.execute(
+        "SELECT * FROM room_plan_submissions WHERE user_id=? AND client_ref=?", [row["id"], body.client_ref]
+    ).fetchone()
+    if existing:
+        # Double-tap / retried request: never create or email a duplicate.
+        return {"ok": True, "id": existing["id"], "reference": existing["reference"],
+                "email_sent": existing["status"] == "sent", "duplicate": True}
+    enforce_rate_limit("room_planner_submit", request)
+    try:
+        sub = room_planner.normalize_submission(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    photos, total = [], 0
+    for i, p in enumerate(body.photos):
+        try:
+            mime, raw = room_planner.decode_image(p.data_url, room_planner.MAX_PHOTO_BYTES)
+        except ValueError as exc:
+            raise HTTPException(400, f"Photo {i + 1}: {exc}")
+        total += len(raw)
+        if total > room_planner.MAX_TOTAL_PHOTO_BYTES:
+            raise HTTPException(413, "Photos are too large in total. Remove a few and try again.")
+        ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[mime]
+        label = re.sub(r"\s+", " ", p.label or "").strip()[:80] or f"Photo {i + 1}"
+        photos.append({"kind": "photo", "label": label, "file": _rp_safe_name(label, i + 1, ext), "raw": raw})
+    sketches = []
+    for i, sk in enumerate(body.sketches):
+        try:
+            mime, raw = room_planner.decode_image(sk.png, room_planner.MAX_SKETCH_BYTES)
+        except ValueError:
+            continue  # the sketch is a convenience copy; numbers are authoritative
+        if mime != "image/png":
+            continue
+        label = "sketch " + (sk.floor or "overview")
+        sketches.append({"kind": "sketch", "label": label, "file": _rp_safe_name(label, i + 1, "png"), "raw": raw})
+
+    import datetime
+    reference = "RP-" + datetime.datetime.now(datetime.timezone.utc).strftime("%y%m%d") + "-" + secrets.token_hex(3).upper()
+    cur = db.execute(
+        """INSERT INTO room_plan_submissions (user_id, reference, client_ref, payload, photo_files, sketch_files)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        [row["id"], reference, body.client_ref, json.dumps(sub),
+         json.dumps([{k: v for k, v in f.items() if k != "raw"} for f in photos]),
+         json.dumps([{k: v for k, v in f.items() if k != "raw"} for f in sketches])],
+    )
+    db.commit()
+    submission_id = cur.lastrowid
+    folder = os.path.join(_RP_UPLOAD_DIR, str(submission_id))
+    os.makedirs(folder, exist_ok=True)
+    for f in sketches + photos:
+        with open(os.path.join(folder, f["file"]), "wb") as fh:
+            fh.write(f["raw"])
+
+    email_sent = _rp_send_backoffice_email(submission_id)
+    email_service.send_email(
+        to=row["email"], subject="We received your floor plan measurements",
+        html=room_planner.render_client_confirmation_email(
+            name=sub["client"]["name"], reference=reference, address=sub["client"]["address"]),
+    )
+    return {"ok": True, "id": submission_id, "reference": reference, "email_sent": email_sent}
+
+
+@app.get("/api/room-planner/submissions")
+def room_planner_list(authorization: str | None = Header(default=None)):
+    """Back-office list (owner/staff only)."""
+    row = current_user(authorization)
+    if not account_is_owner(row):
+        raise HTTPException(403, "Back office only")
+    out = []
+    for r in db.execute(
+        """SELECT s.*, u.email AS account_email FROM room_plan_submissions s
+           LEFT JOIN users u ON u.id = s.user_id ORDER BY s.id DESC LIMIT 200"""
+    ).fetchall():
+        sub = json.loads(r["payload"])
+        out.append({
+            "id": r["id"], "reference": r["reference"], "status": r["status"],
+            "created_at": r["created_at"], "account_email": r["account_email"],
+            "client": sub["client"], "rooms": len(sub["rooms"]), "walls": len(sub["walls"]),
+            "photos": len(json.loads(r["photo_files"])),
+        })
+    return out
+
+
+class RoomPlanGrantBody(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    note: str = Field(default="", max_length=300)
+
+
+def _rp_require_staff(authorization):
+    row = current_user(authorization)
+    if not account_is_owner(row):
+        raise HTTPException(403, "Back office only")
+    return row
+
+
+@app.get("/api/room-planner/grants")
+def room_planner_grants(authorization: str | None = Header(default=None)):
+    """Clients given Room Planner access for architecture drawings paid outside the app."""
+    _rp_require_staff(authorization)
+    rows = db.execute(
+        """SELECT g.user_id, u.email, u.name, g.note, g.granted_by, g.created_at
+             FROM room_planner_grants g JOIN users u ON u.id = g.user_id
+            WHERE g.revoked_at IS NULL ORDER BY g.created_at DESC LIMIT 500"""
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/room-planner/grants", status_code=201)
+def room_planner_grant(body: RoomPlanGrantBody, authorization: str | None = Header(default=None)):
+    staff = _rp_require_staff(authorization)
+    email = body.email.strip().lower()
+    target = db.execute("SELECT id, email, name FROM users WHERE lower(email)=?", [email]).fetchone()
+    if not target:
+        raise HTTPException(404, "No app account uses that email yet. Ask the client to sign up first, then grant access.")
+    db.execute(
+        """INSERT INTO room_planner_grants (user_id, granted_by, note) VALUES (?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET granted_by=excluded.granted_by, note=excluded.note,
+               created_at=CURRENT_TIMESTAMP, revoked_at=NULL, revoked_by=NULL""",
+        [target["id"], staff["email"], body.note.strip()],
+    )
+    db.commit()
+    return {"ok": True, "user_id": target["id"], "email": target["email"], "name": target["name"]}
+
+
+@app.delete("/api/room-planner/grants/{user_id}")
+def room_planner_revoke(user_id: int, authorization: str | None = Header(default=None)):
+    staff = _rp_require_staff(authorization)
+    cur = db.execute(
+        "UPDATE room_planner_grants SET revoked_at=CURRENT_TIMESTAMP, revoked_by=? WHERE user_id=? AND revoked_at IS NULL",
+        [staff["email"], user_id],
+    )
+    db.commit()
+    if not cur.rowcount:
+        raise HTTPException(404, "No active grant for that account")
+    return {"ok": True}
+
+
+@app.post("/api/room-planner/submissions/{submission_id}/resend")
+def room_planner_resend(submission_id: int, authorization: str | None = Header(default=None)):
+    """Retry the back-office email (owner/staff only), e.g. after a provider outage."""
+    row = current_user(authorization)
+    if not account_is_owner(row):
+        raise HTTPException(403, "Back office only")
+    if not db.execute("SELECT 1 FROM room_plan_submissions WHERE id=?", [submission_id]).fetchone():
+        raise HTTPException(404, "Not found")
+    return {"ok": True, "email_sent": _rp_send_backoffice_email(submission_id)}
 
 
 @app.post("/api/guides/unlock")

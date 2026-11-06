@@ -32,7 +32,7 @@ EMAIL_ENABLED = bool(RESEND_API_KEY)
 _RESEND_URL = "https://api.resend.com/emails"
 
 
-def send_email(to: str, subject: str, html: str) -> bool:
+def send_email(to: str, subject: str, html: str, attachments: list | None = None) -> bool:
     """Send one email via Resend. Returns True if the request succeeded.
 
     Never raises — a transient email-provider failure must not break the
@@ -48,6 +48,8 @@ def send_email(to: str, subject: str, html: str) -> bool:
         "to": [to],
         "subject": subject,
         "html": html,
+        # attachments: [{"filename": str, "content": base64 str}] (Resend format)
+        **({"attachments": attachments} if attachments else {}),
     }).encode()
     req = urllib.request.Request(
         _RESEND_URL,
@@ -63,7 +65,7 @@ def send_email(to: str, subject: str, html: str) -> bool:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=60 if attachments else 10) as resp:
             resp.read()
         return True
     except urllib.error.HTTPError as exc:
