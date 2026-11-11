@@ -1,5 +1,5 @@
 /* Room Planner — Floor Plan Measurement Form with a live overview sketch.
- * Clients who paid for architecture drawings enter exterior walls + rooms, attach photos, and submit the
+ * Clients who paid for architecture drawings enter room layouts (name, size, floor, position), attach photos, and submit the
  * package to the Tru Life back office (fixed server-side recipient). There is
  * intentionally no download/export/share control for the client.
  * Depends on globals from index.html: API, authFetch, currentUser, go,
@@ -51,7 +51,7 @@
       client_ref: newRef(),
       client: { name: (user && user.name) || '', phone: (user && user.phone) || '', email: (user && user.email) || '', project_type: '', address: '', floors: '', year_built: '' },
       front_faces: 'S',
-      walls: [0, 1, 2, 3].map(() => ({ id: uid(), feet: '', inches: '', facing: '' })),
+      walls: [],
       rooms: DEFAULT_ROOMS.map(n => ({ id: uid(), name: n, length_ft: '', length_in: '', width_ft: '', width_in: '', floor: '1st floor', position: '', note: '' })),
       extraPhotos: [],
       fixed_elements: '', ceiling_heights: '', comments: '',
@@ -132,7 +132,7 @@
     if (!b) {
       const total = list.reduce((s, o) => s + o.w * o.h, 0);
       const maxW = list.reduce((m, o) => Math.max(m, o.w), 0), maxH = list.reduce((m, o) => Math.max(m, o.h), 0);
-      const side = Math.max(Math.sqrt(total * 1.6), maxW, maxH, 10);
+      const side = Math.max(Math.sqrt(total * 2.4), maxW * 1.1, maxH * 1.1, 10);
       b = { x0: 0, y0: 0, x1: side, y1: side }; virtual = true;
     }
     const used = {};
@@ -190,7 +190,7 @@
     // virtual box if no exterior entered
     if (pr.virtual && pr.placed.length) {
       items.push(`<rect x="${pr.b.x0}" y="${pr.b.y0}" width="${pr.b.x1 - pr.b.x0}" height="${pr.b.y1 - pr.b.y0}" fill="none" stroke="#b1b5be" stroke-width="${sw}" stroke-dasharray="${sw * 4} ${sw * 3}"/>`);
-      items.push(`<text x="${pr.b.x0 + fs * 0.4}" y="${pr.b.y0 - fs * 0.5}" ${font} font-size="${fs * 0.8}" fill="#8a8f99">Exterior walls not entered yet</text>`);
+      items.push(`<text x="${pr.b.x0 + fs * 0.4}" y="${pr.b.y0 - fs * 0.5}" ${font} font-size="${fs * 0.8}" fill="#8a8f99">Approximate layout — rooms arranged by position</text>`);
     }
 
     // rooms
@@ -257,15 +257,14 @@
     const { svg, ol, pr } = buildSVG(state.sketchFloor);
     host.innerHTML = svg;
     const floorArea = roomsOnFloor(state.sketchFloor).reduce((s, { r }) => s + ftOf(r.length_ft, r.length_in) * ftOf(r.width_ft, r.width_in), 0);
-    $('#rp-stat-perim').textContent = ol.perimeter > 0 ? fmtShort(ol.perimeter) : '—';
-    $('#rp-stat-area').textContent = ol.area != null ? Math.round(ol.area).toLocaleString() + ' sf' : '—';
+    $('#rp-stat-perim').textContent = roomsOnFloor(state.sketchFloor).length ? String(roomsOnFloor(state.sketchFloor).length) : '—';
+    const totalArea = state.rooms.reduce((t, r) => t + ftOf(r.length_ft, r.length_in) * ftOf(r.width_ft, r.width_in), 0);
+    $('#rp-stat-area').textContent = totalArea > 0 ? Math.round(totalArea).toLocaleString() + ' sf' : '—';
     $('#rp-stat-rooms').textContent = floorArea > 0 ? Math.round(floorArea).toLocaleString() + ' sf' : '—';
     const checks = [];
-    if (!ol.segs.length) checks.push(['info', 'Add exterior wall lengths and the direction each wall faces.']);
-    else if (ol.closed) checks.push(['ok', 'Exterior outline closes — shapes line up.']);
-    else if (ol.segs.length >= 3) checks.push(['warn', `Outline ends ${fmt(ol.gap)} from the starting corner (red line). Re-check lengths or directions.`]);
-    else checks.push(['info', 'Keep adding walls — the outline closes when you get back to the start.']);
-    if (ol.missing.length) checks.push(['warn', `Wall${ol.missing.length > 1 ? 's' : ''} ${ol.missing.join(', ')} need${ol.missing.length > 1 ? '' : 's'} a direction.`]);
+    const measuredHere = roomsOnFloor(state.sketchFloor).filter(({ r }) => ftOf(r.length_ft, r.length_in) > 0 && ftOf(r.width_ft, r.width_in) > 0).length;
+    if (!measuredHere) checks.push(['info', 'Add a length and width to each room to build the sketch.']);
+    else checks.push(['ok', `${measuredHere} room${measuredHere > 1 ? 's' : ''} drawn to scale on this floor.`]);
     if (pr.unplacedCount) checks.push(['info', `${pr.unplacedCount} room${pr.unplacedCount > 1 ? 's' : ''} on this floor need${pr.unplacedCount > 1 ? '' : 's'} a position.`]);
     if (pr.oversize.length) checks.push(['warn', `${pr.oversize.join(', ')} ${pr.oversize.length > 1 ? 'are' : 'is'} larger than the exterior outline.`]);
     $('#rp-checks').innerHTML = checks.map(([c, t]) => `<li class="${c}">${esc(t)}</li>`).join('');
@@ -277,7 +276,6 @@
     const c = state.client;
     const done = [
       !!(c.name && c.phone && c.project_type && c.address),
-      (ol || computeOutline()).segs.length >= 3,
       state.rooms.some(r => ftOf(r.length_ft, r.length_in) > 0 && ftOf(r.width_ft, r.width_in) > 0),
       Object.keys(photos).length > 0 || !!(state.fixed_elements || state.ceiling_heights || state.comments),
     ];
@@ -358,6 +356,7 @@
   const dirOpts = (val) => opt(Object.keys(DIR).map(k => [k, k + ' · ' + DIR_NAMES[k]]), val, '—');
 
   function renderWalls() {
+    if (!$('#rp-walls-body')) return;
     $('#rp-walls-body').innerHTML = state.walls.map((w, i) => `
       <tr data-wall="${w.id}">
         <td><div class="rp-wall-label">${esc(wallLabel(i))}</div></td>
@@ -390,7 +389,7 @@
           <div class="rp-room-area" data-room-area>${esc(roomArea(r))}</div>
           <div class="rp-room-grid">
             <div><span class="rp-lbl">Floor</span><select data-rf="floor">${opt(ROOM_FLOORS, r.floor)}</select></div>
-            <div><span class="rp-lbl">Position (relative to exterior)</span><select data-rf="position">${opt(POSITIONS, r.position, 'Select position…')}</select></div>
+            <div><span class="rp-lbl">Position in the house</span><select data-rf="position">${opt(POSITIONS, r.position, 'Select position…')}</select></div>
           </div>
           <div style="margin-bottom:12px"><span class="rp-lbl">Quick note (closet, en-suite, open to…)</span><input type="text" data-rf="note" value="${esc(r.note)}" maxlength="200" placeholder="Optional"></div>
         </div>
@@ -406,9 +405,8 @@
       </div>
       <div class="rp-steps" id="rp-steps">
         <button type="button" class="rp-step" data-jump="rp-sec-1"><span>1</span>Client info</button>
-        <button type="button" class="rp-step" data-jump="rp-sec-2"><span>2</span>Exterior walls</button>
-        <button type="button" class="rp-step" data-jump="rp-sec-3"><span>3</span>Rooms</button>
-        <button type="button" class="rp-step" data-jump="rp-sec-4"><span>4</span>Photos & notes</button>
+        <button type="button" class="rp-step" data-jump="rp-sec-3"><span>2</span>Rooms</button>
+        <button type="button" class="rp-step" data-jump="rp-sec-4"><span>3</span>Photos & notes</button>
       </div>
       <div class="rp-layout">
         <div class="rp-form-col">
@@ -431,21 +429,8 @@
             </div>
           </div>
 
-          <div class="card rp-section" id="rp-sec-2">
-            <div class="rp-sec-head"><div class="rp-sec-num">2</div><div><h3>Exterior Wall Measurements</h3><p>Walk around the outside of the building, measuring each wall in order.</p></div></div>
-            <div class="rp-sec-body">
-              <div class="rp-tip"><span>💡</span><span>Start at the <b>front-left corner</b> and work <b>clockwise</b>. Walls are labeled A, B, C… in the order you measure them. For each wall, pick the direction it <b>faces</b> (the outside of that wall). Wrap-around corners and bump-outs are just more walls.</span></div>
-              <div class="field" style="max-width:320px"><label for="rp-front">Front of the building faces</label><select id="rp-front" data-front>${opt(Object.keys(DIR).map(k => [k, DIR_NAMES[k]]), state.front_faces)}</select></div>
-              <div style="overflow-x:auto"><table class="rp-walls">
-                <thead><tr><th>Wall</th><th>Length (ft)</th><th>Inches</th><th>Direction facing</th><th></th></tr></thead>
-                <tbody id="rp-walls-body"></tbody>
-              </table></div>
-              <button type="button" class="rp-add" data-add-wall>+ Add wall</button>
-            </div>
-          </div>
-
           <div class="card rp-section" id="rp-sec-3">
-            <div class="rp-sec-head"><div class="rp-sec-num">3</div><div><h3>Interior Room Dimensions</h3><p>Measure each room wall to wall and choose roughly where it sits.</p></div></div>
+            <div class="rp-sec-head"><div class="rp-sec-num">2</div><div><h3>Room Layouts</h3><p>Measure each room wall to wall and choose roughly where it sits in the house.</p></div></div>
             <div class="rp-sec-body">
               <div class="rp-tip"><span>📐</span><span>Length runs left to right as you face the front of the house; width runs front to back. Position is approximate — it only arranges the overview sketch.</span></div>
               <div id="rp-rooms"></div>
@@ -454,7 +439,7 @@
           </div>
 
           <div class="card rp-section" id="rp-sec-4">
-            <div class="rp-sec-head"><div class="rp-sec-num">4</div><div><h3>Photos &amp; Fixed Elements</h3><p>One photo per room, plus any fixed features the architect must know.</p></div></div>
+            <div class="rp-sec-head"><div class="rp-sec-num">3</div><div><h3>Photos &amp; Fixed Elements</h3><p>One photo per room, plus any fixed features the architect must know.</p></div></div>
             <div class="rp-sec-body">
               <div class="rp-tip"><span>📸</span><span>Stand in the doorway of each room and take a wide-angle photo facing in. Photos help us verify openings and spot features measurements might miss.</span></div>
               <div class="rp-photos" id="rp-photos"></div>
@@ -482,9 +467,9 @@
               <div class="rp-floor-tabs" id="rp-floor-tabs"></div>
               <div class="rp-canvas" id="rp-canvas"></div>
               <div class="rp-stats">
-                <div class="rp-stat"><small>Perimeter</small><b id="rp-stat-perim">—</b></div>
-                <div class="rp-stat"><small>Footprint</small><b id="rp-stat-area">—</b></div>
-                <div class="rp-stat"><small>Rooms</small><b id="rp-stat-rooms">—</b></div>
+                <div class="rp-stat"><small>Rooms</small><b id="rp-stat-perim">—</b></div>
+                <div class="rp-stat"><small>All floors</small><b id="rp-stat-area">—</b></div>
+                <div class="rp-stat"><small>This floor</small><b id="rp-stat-rooms">—</b></div>
               </div>
               <ul class="rp-checks" id="rp-checks"></ul>
               <p class="rp-sketch-note">Simple overview to check your shapes — not to scale for construction. The detailed drawings are prepared by our team after review.</p>
@@ -592,9 +577,8 @@
     if (!c.project_type) missing.push('project type');
     if (!c.address.trim()) missing.push('property address');
     if (missing.length) return 'Please add your ' + missing.join(', ') + ' in section 1.';
-    const walls = state.walls.filter(w => ftOf(w.feet, w.inches) > 0).length;
     const rooms = state.rooms.filter(r => ftOf(r.length_ft, r.length_in) > 0 && ftOf(r.width_ft, r.width_in) > 0).length;
-    if (walls < 3 && !rooms) return 'Add at least three exterior wall lengths or one room with a length and width.';
+    if (!rooms) return 'Add at least one room with a length and width in section 2.';
     return '';
   }
   function openConfirm() {
@@ -604,8 +588,6 @@
     const ol = computeOutline();
     const rooms = state.rooms.filter(r => ftOf(r.length_ft, r.length_in) > 0 && ftOf(r.width_ft, r.width_in) > 0).length;
     const warns = [];
-    if (ol.segs.length >= 3 && !ol.closed) warns.push(`The exterior outline doesn't close (off by ${fmt(ol.gap)}).`);
-    if (ol.missing.length) warns.push(`Wall${ol.missing.length > 1 ? 's' : ''} ${ol.missing.join(', ')} ${ol.missing.length > 1 ? 'have' : 'has'} no direction.`);
     const emptyRooms = state.rooms.length - rooms;
     if (emptyRooms > 0) warns.push(`${emptyRooms} room${emptyRooms > 1 ? 's have' : ' has'} no dimensions and will be sent as names only.`);
     const card = $('#rp-modal .rp-modal-card');
@@ -614,7 +596,7 @@
       <div class="rp-dest">Sending to: <b>Tru Life Properties back office</b></div>
       <ul>
         <li>${esc(state.client.address)}</li>
-        <li>${state.walls.filter(w => ftOf(w.feet, w.inches) > 0).length} exterior walls · ${rooms} measured rooms</li>
+        <li>${rooms} measured room${rooms === 1 ? '' : 's'} · ${state.rooms.length} room${state.rooms.length === 1 ? '' : 's'} listed</li>
         <li>${Object.keys(photos).length} photo${Object.keys(photos).length === 1 ? '' : 's'} · overview sketch</li>
       </ul>
       ${warns.length ? `<div class="rp-tip" style="background:var(--amber-soft)"><span>⚠️</span><span>${warns.map(esc).join('<br>')}<br>You can still submit — our team will follow up — or go back and fix it.</span></div>` : ''}
