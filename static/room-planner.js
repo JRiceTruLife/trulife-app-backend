@@ -238,8 +238,8 @@
     if (ol.segs.length || pr.placed.length) {
       items.push(`<text x="${(pr.b.x0 + pr.b.x1) / 2}" y="${vy + vh - fs * 0.6}" ${font} font-size="${fs * 0.78}" fill="#8a8f99" text-anchor="middle" letter-spacing="${fs * 0.1}">FRONT</text>`);
     } else {
-      items.push(`<text x="${vx + vw / 2}" y="${vy + vh / 2}" ${font} font-size="${fs * 0.95}" fill="#8a8f99" text-anchor="middle">Enter wall lengths and directions</text>`);
-      items.push(`<text x="${vx + vw / 2}" y="${vy + vh / 2 + fs * 1.4}" ${font} font-size="${fs * 0.95}" fill="#8a8f99" text-anchor="middle">to watch your plan come together</text>`);
+      items.push(`<text x="${vx + vw / 2}" y="${vy + vh / 2}" ${font} font-size="${fs * 0.95}" fill="#8a8f99" text-anchor="middle">Add rooms with a length and width</text>`);
+      items.push(`<text x="${vx + vw / 2}" y="${vy + vh / 2 + fs * 1.4}" ${font} font-size="${fs * 0.95}" fill="#8a8f99" text-anchor="middle">to watch your layout come together</text>`);
     }
 
     const size = opts.width ? `width="${opts.width}" height="${Math.round(opts.width * vh / vw)}"` : '';
