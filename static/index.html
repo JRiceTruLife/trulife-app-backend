@@ -1757,6 +1757,13 @@ body {
 
 /* preview walkthrough card — vertically centered with the title copy */
 .dz-head-media { position: relative; background: var(--navy); border-radius: 14px; overflow: hidden; box-shadow: 0 12px 30px rgba(3,17,88,0.16); width: 100%; max-width: 460px; margin-left: auto; align-self: center; }
+.tl-video-fallback { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgba(3,17,88,0.82); color: #fff; text-align: center; padding: 18px; z-index: 3; border-radius: inherit; }
+.tl-video-fallback p { margin: 0; font-weight: 600; }
+.tl-video-fallback-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.tl-video-fallback button, .tl-video-fallback a { font: inherit; font-size: 14px; font-weight: 700; padding: 10px 16px; border-radius: 999px; border: 0; cursor: pointer; text-decoration: none; }
+.tl-video-fallback button { background: #fff; color: #031158; }
+.tl-video-fallback a { background: rgba(255,255,255,0.18); color: #fff; border: 1px solid rgba(255,255,255,0.5); }
+.dz-head-media { position: relative; }
 .dz-head-video { display: block; width: 100%; height: auto; aspect-ratio: 16/9; object-fit: cover; background: var(--navy); }
 .dz-head-media-tag { position: absolute; top: 10px; left: 10px; background: rgba(3,17,88,0.85); backdrop-filter: blur(6px); color: var(--white); font-size: 0.66rem; letter-spacing: 0.16em; text-transform: uppercase; font-weight: 700; padding: 5px 10px; border-radius: 999px; display: inline-flex; align-items: center; gap: 6px; pointer-events: none; }
 .dz-live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 3px rgba(218,166,31,0.28); animation: dzPulse 1.8s ease-in-out infinite; }
@@ -4002,7 +4009,7 @@ body {
         <div class="bbb-player-grid">
           <div class="bbb-player-col">
             <div class="bbb-player-wrap">
-              <video id="bbb-player" controls playsinline preload="metadata" controlslist="nodownload" poster="brick/fixflip/module-1-poster.jpg">
+              <video id="bbb-player" controls playsinline preload="none" controlslist="nodownload" poster="brick/fixflip/module-1-poster.jpg">
                 <source src="brick/fixflip/module-1.mp4" type="video/mp4" />
                 Your browser doesn&rsquo;t support embedded video.
               </video>
@@ -4192,7 +4199,7 @@ body {
               loop
               playsinline
               controls
-              preload="metadata"></video>
+              preload="none"></video>
             <div class="dz-head-media-tag"><span class="dz-live-dot"></span>Finished walkthrough</div>
           </div>
         </div>
@@ -4880,7 +4887,7 @@ body {
               loop
               playsinline
               controls
-              preload="metadata"></video>
+              preload="none"></video>
             <div class="dz-head-media-tag"><span class="dz-live-dot"></span>Finished walkthrough</div>
           </div>
         </div>
@@ -5523,7 +5530,7 @@ body {
               loop
               playsinline
               controls
-              preload="metadata"></video>
+              preload="none"></video>
             <div class="dz-head-media-tag"><span class="dz-live-dot"></span>7410 Lawyer Rd walkthrough</div>
           </div>
         </div>
@@ -5945,7 +5952,7 @@ body {
               loop
               playsinline
               controls
-              preload="metadata">
+              preload="none">
               <source src="design/colonial/colonial-walkthrough.mp4" type="video/mp4" />
               <source src="design/colonial/colonial-walkthrough.mov" type="video/quicktime" />
             </video>
@@ -7674,7 +7681,7 @@ body {
         <div class="arc-section">
           <div class="arc-sec-head"><h3>The <em>Finished Home</em></h3><span class="arc-sec-meta">Property Teaser &middot; Tru Life Branded Walkthrough</span></div>
           <div class="arc-video-wrap" id="kenwood-video-wrap">
-            <video controls autoplay muted loop playsinline preload="auto" poster="design/architecture/kenwood/kenwood-teaser-poster.jpg" style="width:100%; height:auto; display:block; border-radius:14px; background:#000;">
+            <video id="kenwood-teaser-video" controls muted loop playsinline preload="none" poster="design/architecture/kenwood/kenwood-teaser-poster.jpg" style="width:100%; height:auto; display:block; border-radius:14px; background:#000;">
               <source src="design/architecture/kenwood/kenwood-teaser.mp4" type="video/mp4">
               Your browser doesn&rsquo;t support embedded video. <a href="design/architecture/kenwood/kenwood-teaser.mp4">Download the teaser</a>.
             </video>
@@ -8993,10 +9000,46 @@ function go(screen) {
   if (screen === 'five-step') initFiveStep();
   if (screen === 'design') resetDesignView();
   if (screen === 'architecture') resetArcView();
+  if (screen !== 'architecture') { const kv = document.getElementById('kenwood-teaser-video'); if (kv) { try { kv.pause(); } catch (_) {} } }
   if (screen === 'room-planner' && typeof rpOnShow === 'function') rpOnShow();
+  if (screen === 'brick') { const bp = document.getElementById('bbb-player'); if (bp && bp.preload !== 'auto') { bp.preload = 'auto'; try { bp.load(); } catch (_) {} } }
 }
 
 navItems.forEach(item => item.addEventListener('click', () => go(item.dataset.screen)));
+
+// ===== VIDEO LOAD GUARD =====
+// If a video fails to load (network drop, phone memory pressure, Safari
+// refusing the source) the player shows an unplayable icon with no way
+// forward. Offer a retry and a direct link that opens in the phone's own
+// player instead.
+(function videoLoadGuard() {
+  function srcOf(v) {
+    const s = v.currentSrc || v.getAttribute('src') || (v.querySelector('source') && v.querySelector('source').getAttribute('src')) || '';
+    return s ? s.split('?')[0] : '';
+  }
+  function showFallback(v) {
+    if (!srcOf(v)) return; // intentionally empty (e.g. locked module)
+    const host = v.parentElement; if (!host) return;
+    if (host.querySelector('.tl-video-fallback')) return;
+    const box = document.createElement('div');
+    box.className = 'tl-video-fallback';
+    const url = new URL(srcOf(v), window.location.href).href;
+    box.innerHTML = '<p>This video didn\u2019t load.</p><div class="tl-video-fallback-actions"><button type="button" class="tl-vf-retry">Try again</button><a class="tl-vf-open" href="' + url + '" target="_blank" rel="noopener">Open video</a></div>';
+    box.querySelector('.tl-vf-retry').addEventListener('click', () => {
+      box.remove();
+      try { v.preload = 'auto'; v.load(); const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+    });
+    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    host.appendChild(box);
+  }
+  function watch(v) {
+    if (v.dataset.tlGuard === '1') return; v.dataset.tlGuard = '1';
+    v.addEventListener('error', () => showFallback(v));
+    v.querySelectorAll('source').forEach((sEl, i, all) => { if (i === all.length - 1) sEl.addEventListener('error', () => showFallback(v)); });
+    v.addEventListener('loadeddata', () => { const f = v.parentElement && v.parentElement.querySelector('.tl-video-fallback'); if (f) f.remove(); });
+  }
+  document.querySelectorAll('video').forEach(watch);
+})();
 
 // ===== DESIGN TAB =====
 function resetDesignView() {
@@ -9020,6 +9063,11 @@ function openDesignTemplate(name) {
     const heroVid = document.getElementById('dz-head-video-' + name);
     if (heroVid) {
       try {
+        // Videos are preload="none" so only the open guide's walkthrough
+        // is fetched (iOS Safari shows a struck-through play icon when
+        // several large videos load at once). Start this one now.
+        if (heroVid.preload !== 'auto') { heroVid.preload = 'auto'; heroVid.load(); }
+        else if (heroVid.readyState === 0 || heroVid.error) heroVid.load();
         heroVid.currentTime = 0;
         heroVid.muted = true;
         const p = heroVid.play();
@@ -9043,6 +9091,7 @@ function resetArcView() {
   const wrap = document.getElementById('arc-cats-wrap');
   if (wrap) wrap.style.display = '';
   document.querySelectorAll('.arc-detail').forEach(d => d.classList.remove('active'));
+  document.querySelectorAll('.arc-detail video').forEach(v => { try { v.pause(); } catch (_) {} });
 }
 function openArcPlan(name) {
   const wrap = document.getElementById('arc-cats-wrap');
@@ -9050,6 +9099,16 @@ function openArcPlan(name) {
   if (wrap) wrap.style.display = 'none';
   if (detail) detail.classList.add('active');
   window.scrollTo(0, 0);
+  // The teaser is preload="none" so it only downloads once this plan is
+  // opened; start it muted here (same autoplay behaviour as before).
+  const teaser = detail && detail.querySelector('video');
+  if (teaser) {
+    try {
+      if (teaser.preload !== 'auto') { teaser.preload = 'auto'; teaser.load(); }
+      teaser.muted = true;
+      const p = teaser.play(); if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
+  }
 }
 document.querySelectorAll('.arc-card[data-arc-plan]').forEach(c => {
   c.addEventListener('click', () => openArcPlan(c.dataset.arcPlan));
@@ -11926,6 +11985,8 @@ function bbbLoadModule(n, autoplay) {
   const setSrc = (url) => {
     if (seq !== _bbbLoadSeq) return;
     if (srcEl) { if (url) srcEl.src = url; else srcEl.removeAttribute('src'); } else { if (url) video.src = url; else video.removeAttribute('src'); }
+    const brickOpen = (() => { const sc = document.getElementById('screen-brick'); return !!(sc && sc.classList.contains('active')); })();
+    video.preload = (brickOpen || autoplay) ? 'auto' : 'none';
     video.load();
     if (url && autoplay) { const p = video.play(); if (p && p.catch) p.catch(() => {}); }
   };
