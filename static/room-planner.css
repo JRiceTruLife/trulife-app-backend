@@ -163,3 +163,8 @@
   .rp-walls td:nth-child(4) { grid-area: dir; }
   .rp-walls td:nth-child(5) { grid-area: x; align-self: start; }
 }
+@media (max-width: 560px) {
+  /* Stack length over width on phones so ft/in fields have room for 3-digit values */
+  .rp-dims { grid-template-columns: 1fr; gap: 10px; }
+  .rp-dims .rp-times { display: none; }
+}
