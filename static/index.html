@@ -2474,6 +2474,7 @@ body {
 .aff-del-btn { background: none; border: none; color: #a12c2c; cursor: pointer; font-size: 0.8rem; font-weight: 700; }
 .aff-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
 .aff-badge-active { background: #e6f4ea; color: #1e7a3f; }
+.aff-badge-discord { background: #ece9fb; color: #4f3fb5; }
 .aff-badge-inactive { background: #f0f1f6; color: #9296a6; }
 @media (max-width: 720px) {
   .aff-stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -2629,7 +2630,10 @@ body {
 
       <section class="aff-panel" id="aff-panel-affiliates">
         <div class="aff-panel-head">
-          <h2 class="aff-h2">Affiliates</h2>
+          <div>
+            <h2 class="aff-h2">Affiliates</h2>
+            <p class="aff-sub" style="margin-bottom:0;">Affiliates approved in the Discord server (<code>/affiliate add</code>) appear here automatically with their invite link, and their monthly membership residuals are credited on their own. If someone shows as &ldquo;From Discord &middot; no login&rdquo;, either give them a login or merge them into their existing account.</p>
+          </div>
           <button type="button" class="aff-btn-sm" id="aff-add-affiliate-btn">+ Add Affiliate</button>
         </div>
         <div id="aff-add-affiliate-form" class="aff-form aff-inline-form" style="display:none;">
@@ -8636,10 +8640,13 @@ async function loadAffAffiliatesList() {
         '<td>' + escapeHtml(a.email) + '</td>' +
         '<td style="white-space:nowrap;"><input type="number" class="aff-rate-input aff-rate-field" min="0" max="100" step="0.5" value="' + (a.default_rate != null ? a.default_rate : 20) + '" data-id="' + a.id + '" aria-label="Commission percent" />% ' +
           '<span class="text-muted" style="font-size:0.74rem;">' + (a.rate_override != null ? 'custom' : 'program ' + (a.program_rate != null ? a.program_rate : 20) + '%') + '</span></td>' +
-        '<td><span class="aff-badge aff-badge-active">Active</span>' + (a.discord_invite_code ? '<div class="text-muted" style="font-size:0.72rem;margin-top:4px;">Discord: ' + escapeHtml(a.discord_invite_code) + '</div>' : '') + '</td>' +
+        '<td><span class="aff-badge aff-badge-active">Active</span>' +
+          (a.source === 'discord-hub' && !a.has_login ? ' <span class="aff-badge aff-badge-discord" title="Created automatically from the Discord server. Set a login, or merge into their existing account.">From Discord \u00b7 no login</span>' : (a.discord_user_id ? ' <span class="aff-badge aff-badge-discord" title="Linked to their Discord account by the hub">Discord linked</span>' : '')) +
+          (a.discord_invite_code ? '<div class="text-muted" style="font-size:0.72rem;margin-top:4px;">Invite: discord.gg/' + escapeHtml(a.discord_invite_code) + (a.hub_synced_at ? ' \u00b7 synced' : ' \u00b7 entered by hand') + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap;">' +
-          '<button type="button" class="aff-copy-btn aff-set-login-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-email="' + escapeHtml(a.email || '') + '">' + (a.email ? 'Reset Login' : 'Set Login') + '</button> ' +
+          '<button type="button" class="aff-copy-btn aff-set-login-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-email="' + escapeHtml(a.email || '') + '">' + (a.has_login ? 'Reset Login' : 'Set Login') + '</button> ' +
           '<button type="button" class="aff-copy-btn aff-set-discord-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-code="' + escapeHtml(a.discord_invite_code || '') + '">Discord Invite</button>' +
+          (a.source === 'discord-hub' && !a.has_login ? ' <button type="button" class="aff-copy-btn aff-merge-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '">Merge into\u2026</button>' : '') +
         '</td>' +
       '</tr>'
     )).join('') || '<tr><td colspan="6">No affiliates yet.</td></tr>';
@@ -8671,6 +8678,28 @@ async function loadAffAffiliatesList() {
           if (!res.ok) throw new Error(data.detail || 'Failed to save invite code');
           loadAffAffiliatesList();
         } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = 'Discord Invite'; }
+      });
+    });
+    tbody.querySelectorAll('.aff-merge-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        const name = btn.getAttribute('data-name');
+        const targets = (rows || []).filter(r => String(r.id) !== String(id) && !(r.source === 'discord-hub' && !r.has_login));
+        if (!targets.length) { alert('There is no other affiliate account to merge into yet. Use Set Login instead to give ' + name + ' their own login.'); return; }
+        const menu = targets.map((r, i) => (i + 1) + '. ' + r.name + (r.email ? ' (' + r.email + ')' : '')).join('\n');
+        const pick = window.prompt('"' + name + '" was created automatically from Discord. If this is really one of your existing affiliates, type the number to merge all of their Discord sales and members into that account:\n\n' + menu, '');
+        if (pick === null) return;
+        const target = targets[parseInt(pick, 10) - 1];
+        if (!target) { alert('Enter one of the numbers shown.'); return; }
+        if (!window.confirm('Merge "' + name + '" into "' + target.name + '"? Sales, clients and the Discord link move across. This cannot be undone.')) return;
+        btn.disabled = true; btn.textContent = 'Merging\u2026';
+        try {
+          const res = await affiliateFetch('/api/affiliate/list/' + id + '/merge', { method: 'POST', body: JSON.stringify({ into_id: target.id }) });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Merge failed');
+          loadAffAffiliatesList();
+          if (typeof loadAffSales === 'function') loadAffSales();
+        } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = 'Merge into\u2026'; }
       });
     });
     tbody.querySelectorAll('.aff-set-login-btn').forEach(btn => {

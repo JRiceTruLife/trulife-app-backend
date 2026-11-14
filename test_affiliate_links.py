@@ -216,6 +216,101 @@ class CampaignLinkTests(unittest.TestCase):
         self.assertEqual(r["reason"], "self_referral")
         self.assertEqual(self.client.post("/api/affiliate/external-sale", json={**body, "provider": "whop"}, headers=HUB).status_code, 400)
 
+    # ------------------------------------------------- hub roster sync
+    def roster(self, *entries):
+        return self.client.post("/api/affiliate/hub-roster", json={"affiliates": list(entries)}, headers=HUB)
+
+    def test_roster_links_by_email_code_and_creates_unknown(self):
+        # Alice already has an app login -> linked by email. Bob claimed a code
+        # by hand -> linked by code. Cara is new -> created, no login yet.
+        self.client.put(f"/api/affiliate/list/{self.b['id']}/discord", json={"invite_code": "bobCode"}, headers=self.mh)
+        r = self.roster(
+            {"discord_user_id": "111", "name": "Alice D", "invite_code": "aliceCode", "email": "ALICE@example.test"},
+            {"discord_user_id": "222", "name": "Bobby", "invite_code": "bobCode", "email": ""},
+            {"discord_user_id": "333", "name": "Cara Cash", "invite_code": "caraCode", "email": "cara@example.test"},
+            {"discord_user_id": "444", "name": "Gone", "invite_code": "x", "active": False},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["counts"], {"linked_email": 1, "linked_code": 1, "created": 1, "skipped": 1})
+        rows = {a["slug"]: a for a in self.client.get("/api/affiliate/list", headers=self.mh).json()}
+        self.assertEqual(rows["alice"]["discord_invite_code"], "aliceCode")
+        self.assertEqual(rows["alice"]["discord_user_id"], "111")
+        self.assertEqual(rows["alice"]["name"], "Alice")  # hand-made record keeps its name
+        self.assertEqual(rows["bob"]["discord_user_id"], "222")
+        cara = rows["cara-cash"]
+        self.assertEqual((cara["source"], cara["has_login"], cara["email"], cara["discord_invite_code"]),
+                         ("discord-hub", False, "cara@example.test", "caraCode"))
+        # Second identical push is a no-op; a renamed Discord affiliate with a new invite follows the hub.
+        self.assertEqual(self.roster({"discord_user_id": "333", "name": "Cara Cash", "invite_code": "caraCode",
+                                      "email": "cara@example.test"}).json()["counts"], {"unchanged": 1})
+        r = self.roster({"discord_user_id": "333", "name": "Cara C.", "invite_code": "caraCode2", "email": "cara@example.test"})
+        self.assertEqual(r.json()["counts"], {"updated": 1})
+        cara = api.db.execute("SELECT * FROM affiliates WHERE discord_user_id='333'").fetchone()
+        self.assertEqual((cara["name"], cara["discord_invite_code"]), ("Cara C.", "caraCode2"))
+        # Hub removes Cara -> her hub-owned, login-less record is deactivated; Alice's real account never is.
+        r = self.roster({"discord_user_id": "333", "name": "Cara C.", "active": False},
+                        {"discord_user_id": "111", "name": "Alice D", "active": False})
+        self.assertEqual(r.json()["counts"], {"deactivated": 1, "unchanged": 1})
+        self.assertEqual(api.db.execute("SELECT active FROM affiliates WHERE slug='alice'").fetchone()[0], 1)
+        self.assertEqual(self.roster({"discord_user_id": "abc"}).json()["counts"], {"skipped": 1})
+        # Hand-seeded roster entry with no email: exact name match links it instead of creating a twin.
+        api.db.execute("INSERT INTO affiliates(slug,name) VALUES ('tayvon','Tayvon')"); api.db.commit()
+        r = self.roster({"discord_user_id": "777", "name": "tayvon", "invite_code": "TayInv"})
+        self.assertEqual(r.json()["counts"], {"linked_name": 1})
+        tay = api.db.execute("SELECT * FROM affiliates WHERE slug='tayvon'").fetchone()
+        self.assertEqual((tay["discord_user_id"], tay["discord_invite_code"], tay["name"]), ("777", "TayInv", "Tayvon"))
+        self.assertEqual(api.db.execute("SELECT COUNT(*) FROM affiliates WHERE LOWER(name)='tayvon'").fetchone()[0], 1)
+        self.assertEqual(self.client.post("/api/affiliate/hub-roster", json={"affiliates": []},
+                                          headers={"X-TruLife-Hub-Key": "nope"}).status_code, 401)
+
+    def test_unknown_invite_owner_is_created_and_credited(self):
+        body = {"provider": "discord-hub", "transaction_id": "in_500", "email": "member@example.test",
+                "amount_cents": 2900, "product": "Discord Membership", "description": "BWBB Foundation",
+                "hub_affiliate_code": "newCode", "hub_affiliate_name": "Dee Fresh",
+                "hub_affiliate_discord_id": "555", "hub_affiliate_email": "dee@example.test"}
+        r = self.client.post("/api/affiliate/external-sale", json=body, headers=HUB).json()
+        self.assertTrue(r["credited"] and r["affiliate_created"])
+        self.assertEqual((r["via"], r["commission"]), ("discord_invite_code", 5.8))
+        dee = api.db.execute("SELECT * FROM affiliates WHERE id=?", (r["affiliate_id"],)).fetchone()
+        self.assertEqual((dee["name"], dee["slug"], dee["source"], dee["discord_invite_code"]),
+                         ("Dee Fresh", "dee-fresh", "discord-hub", "newCode"))
+        # Next month's invoice credits the same record (no second affiliate).
+        r2 = self.client.post("/api/affiliate/external-sale", json={**body, "transaction_id": "in_501"}, headers=HUB).json()
+        self.assertEqual((r2["affiliate_id"], r2["affiliate_created"]), (dee["id"], False))
+        self.assertEqual(api.db.execute("SELECT COUNT(*) FROM affiliates WHERE discord_user_id='555'").fetchone()[0], 1)
+        # Without owner details the old behaviour stands: nothing is credited.
+        r3 = self.client.post("/api/affiliate/external-sale", json={
+            "provider": "discord-hub", "transaction_id": "in_502", "amount_cents": 2900,
+            "hub_affiliate_code": "mystery"}, headers=HUB).json()
+        self.assertEqual(r3["reason"], "no_attribution")
+
+    def test_merge_discord_record_into_real_account(self):
+        # Dee earned two residuals on an auto-created record, then Justin
+        # realises Dee is Alice -> merge; Alice now owns the sales + Discord id.
+        body = {"provider": "discord-hub", "amount_cents": 2900, "hub_affiliate_code": "deeCode",
+                "hub_affiliate_name": "Dee", "hub_affiliate_discord_id": "555"}
+        for tid in ("in_1", "in_2"):
+            self.client.post("/api/affiliate/external-sale", json={**body, "transaction_id": tid}, headers=HUB)
+        dee = api.db.execute("SELECT * FROM affiliates WHERE discord_user_id='555'").fetchone()
+        self.signup("c1@example.test", "dee")
+        # Not allowed: merging a real account, or a non-admin caller.
+        self.assertEqual(self.client.post(f"/api/affiliate/list/{self.b['id']}/merge", json={"into_id": self.a["id"]}, headers=self.mh).status_code, 400)
+        self.assertEqual(self.client.post(f"/api/affiliate/list/{dee['id']}/merge", json={"into_id": self.a["id"]}, headers=self.ah).status_code, 403)
+        r = self.client.post(f"/api/affiliate/list/{dee['id']}/merge", json={"into_id": self.a["id"]}, headers=self.mh)
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["moved"]["affiliate_sales"], 2)
+        self.assertEqual(r.json()["moved"]["users"], 1)
+        alice = r.json()["affiliate"]
+        self.assertEqual((alice["discord_user_id"], alice["discord_invite_code"]), ("555", "deeCode"))
+        self.assertEqual(len(self.client.get("/api/affiliate/sales", headers=self.ah).json()), 2)
+        # Dee's record is hidden from the roster and future hub pushes / invoices land on Alice.
+        slugs = [a["slug"] for a in self.client.get("/api/affiliate/list", headers=self.mh).json()]
+        self.assertNotIn("dee", slugs)
+        self.assertEqual(self.roster({"discord_user_id": "555", "name": "Dee", "invite_code": "deeCode"}).json()["counts"], {"unchanged": 1})
+        r = self.client.post("/api/affiliate/external-sale", json={**body, "transaction_id": "in_3"}, headers=HUB).json()
+        self.assertEqual((r["affiliate_id"], r["affiliate_created"]), (self.a["id"], False))
+        self.assertEqual(self.client.post(f"/api/affiliate/list/{dee['id']}/merge", json={"into_id": self.a["id"]}, headers=self.mh).status_code, 400)
+
     def test_disabled_without_secret(self):
         with patch.object(api, "HUB_SHARED_SECRET", ""):
             r = self.client.post("/api/affiliate/external-sale", json={"provider": "discord-hub", "transaction_id": "x", "amount_cents": 1}, headers=HUB)

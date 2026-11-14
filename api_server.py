@@ -740,6 +740,10 @@ def affiliate_public(row) -> dict:
         "default_rate": affiliate_tracking.effective_rate(row),
         "rate_override": _row_get(row, "rate_override"),
         "discord_invite_code": _row_get(row, "discord_invite_code") or "",
+        "discord_user_id": _row_get(row, "discord_user_id") or "",
+        "source": _row_get(row, "source") or "",
+        "hub_synced_at": _row_get(row, "hub_synced_at") or "",
+        "has_login": bool(row["password_hash"]),
         "product_rates": {},
         "program_rate": AFFILIATE_COMMISSION_RATE,
         "is_admin": bool(row["is_admin"]),
@@ -905,6 +909,27 @@ class ExternalSaleBody(BaseModel):
     hub_affiliate_code: str = Field(default="", max_length=100)
     member_label: str = Field(default="", max_length=120)
     occurred_at: str = Field(default="", max_length=40)
+    # Who owns the invite (so the app can create the affiliate itself if
+    # nobody has claimed the code yet).
+    hub_affiliate_name: str = Field(default="", max_length=80)
+    hub_affiliate_discord_id: str = Field(default="", max_length=40)
+    hub_affiliate_email: str = Field(default="", max_length=254)
+
+
+class HubRosterEntry(BaseModel):
+    discord_user_id: str = Field(max_length=40)
+    name: str = Field(default="", max_length=80)
+    invite_code: str = Field(default="", max_length=100)
+    email: str = Field(default="", max_length=254)
+    active: bool = True
+
+
+class HubRosterBody(BaseModel):
+    affiliates: list[HubRosterEntry] = Field(default_factory=list, max_length=500)
+
+
+class AffiliateMergeBody(BaseModel):
+    into_id: int
 
 
 class AffiliateCredentialsBody(BaseModel):
@@ -2045,28 +2070,65 @@ def affiliate_links_update(link_id: int, body: AffiliateLinkUpdateBody, authoriz
     return {**affiliate_links.link_public(row, _link_base()), "stats": affiliate_links.link_stats(db, aff, row)}
 
 
+def require_hub_key(request: Request, key: str | None):
+    """Server-to-server auth for the Tru Life Discord hub (shared secret)."""
+    if not HUB_SHARED_SECRET:
+        raise HTTPException(503, "Hub integration is not configured")
+    if not key or not hmac.compare_digest(key, HUB_SHARED_SECRET):
+        enforce_rate_limit("hub_external_sale", request)
+        raise HTTPException(401, "Invalid hub key")
+
+
 @app.post("/api/affiliate/external-sale")
 def affiliate_external_sale(body: ExternalSaleBody, request: Request, x_trulife_hub_key: str | None = Header(default=None)):
     """Server-to-server: the Tru Life Discord hub forwards each paid Stripe
     membership invoice. Authenticated by a shared secret, never callable
     from a browser session. Idempotent per provider + transaction id."""
-    if not HUB_SHARED_SECRET:
-        raise HTTPException(503, "External sales are not configured")
-    if not x_trulife_hub_key or not hmac.compare_digest(x_trulife_hub_key, HUB_SHARED_SECRET):
-        enforce_rate_limit("hub_external_sale", request)
-        raise HTTPException(401, "Invalid hub key")
+    require_hub_key(request, x_trulife_hub_key)
     if body.provider.strip().lower() not in ("discord-hub",):
         raise HTTPException(400, "Unknown provider")
+    hub_affiliate = None
+    if body.hub_affiliate_discord_id.strip():
+        hub_affiliate = {"discord_user_id": body.hub_affiliate_discord_id, "name": body.hub_affiliate_name,
+                         "email": body.hub_affiliate_email}
     try:
         result = affiliate_links.record_external_sale(
             db, provider=body.provider, transaction_id=body.transaction_id, email=body.email,
             amount_cents=body.amount_cents, product=body.product or "Discord Membership",
             description=body.description, hub_affiliate_code=body.hub_affiliate_code,
             member_label=body.member_label, occurred_at=body.occurred_at or None,
+            hub_affiliate=hub_affiliate,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return result
+
+
+@app.post("/api/affiliate/hub-roster")
+def affiliate_hub_roster(body: HubRosterBody, request: Request, x_trulife_hub_key: str | None = Header(default=None)):
+    """Server-to-server: the Discord hub pushes its affiliate roster (on
+    /affiliate add|remove, at startup and daily). The app links each Discord
+    affiliate to the matching app affiliate (by Discord id, claimed invite
+    code, or email) or creates the record, so nobody has to type invite codes
+    by hand. Idempotent: pushing the same roster twice changes nothing."""
+    require_hub_key(request, x_trulife_hub_key)
+    return affiliate_links.sync_hub_roster(db, [e.model_dump() for e in body.affiliates])
+
+
+@app.post("/api/affiliate/list/{affiliate_id}/merge")
+def affiliate_admin_merge(affiliate_id: int, body: AffiliateMergeBody, authorization: str | None = Header(default=None)):
+    """Admin: fold a Discord-created affiliate (no login yet) into the same
+    person's real app affiliate account. Sales, clients, links and the
+    Discord identity move across; nothing is deleted."""
+    me = current_affiliate(authorization)
+    if not me["is_admin"]:
+        raise HTTPException(403, "Admin access required")
+    try:
+        res = affiliate_links.merge_affiliates(db, source_id=affiliate_id, target_id=body.into_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    res["affiliate"] = affiliate_public(db.execute("SELECT * FROM affiliates WHERE id = ?", [body.into_id]).fetchone())
+    return res
 
 
 @app.get("/api/affiliate/sales")

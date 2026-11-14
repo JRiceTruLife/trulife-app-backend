@@ -56,12 +56,21 @@ def migrate(conn):
         ("affiliate_clicks", "link_id", "ALTER TABLE affiliate_clicks ADD COLUMN link_id INTEGER"),
         ("users", "referred_link_id", "ALTER TABLE users ADD COLUMN referred_link_id INTEGER"),
         ("affiliate_sales", "external_id", "ALTER TABLE affiliate_sales ADD COLUMN external_id TEXT"),
+        # Discord hub roster sync: which Discord account this affiliate is,
+        # where the record came from and when the hub last confirmed it.
+        ("affiliates", "discord_user_id", "ALTER TABLE affiliates ADD COLUMN discord_user_id TEXT"),
+        ("affiliates", "source", "ALTER TABLE affiliates ADD COLUMN source TEXT DEFAULT ''"),
+        ("affiliates", "hub_synced_at", "ALTER TABLE affiliates ADD COLUMN hub_synced_at TIMESTAMP"),
+        ("affiliates", "merged_into", "ALTER TABLE affiliates ADD COLUMN merged_into INTEGER"),
     ):
         cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
         if col not in cols:
             conn.execute(ddl)
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS sale_external_idx ON affiliate_sales(external_id) WHERE external_id IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS aff_discord_user_idx ON affiliates(discord_user_id) WHERE discord_user_id IS NOT NULL"
     )
     conn.commit()
 
@@ -213,7 +222,7 @@ def link_public(row, base: str) -> dict:
 def record_external_sale(conn, *, provider: str, transaction_id: str, email: str,
                          amount_cents: int, product: str, description: str = "",
                          hub_affiliate_code: str = "", member_label: str = "",
-                         occurred_at: str | None = None):
+                         occurred_at: str | None = None, hub_affiliate: dict | None = None):
     """Credit a verified payment that happened outside the app (today: a
     Discord membership invoice paid through the hub's Stripe account).
 
@@ -224,7 +233,10 @@ def record_external_sale(conn, *, provider: str, transaction_id: str, email: str
       2. Otherwise the hub tells us which Discord invite code the member
          joined through; if an app affiliate has claimed that code, credit
          them directly.
-      3. Otherwise nothing is credited (reported back so the hub can log it).
+      3. Otherwise, if the hub also sent who owns that invite (name /
+         Discord id / email), create the affiliate record right here so the
+         money is never lost, then credit it.
+      4. Otherwise nothing is credited (reported back so the hub can log it).
     Idempotent per (provider, transaction_id).
     """
     provider = (provider or "").strip().lower()[:40]
@@ -272,6 +284,11 @@ def record_external_sale(conn, *, provider: str, transaction_id: str, email: str
         "SELECT * FROM affiliates WHERE active = 1 AND discord_invite_code IS NOT NULL AND LOWER(discord_invite_code) = ?",
         [code],
     ).fetchone() if code else None
+    auto_created = False
+    if not aff and code and hub_affiliate:
+        raw_code = (hub_affiliate_code or "").strip().rsplit("/", 1)[-1][:60]
+        aff = sync_hub_affiliate(conn, {**hub_affiliate, "invite_code": raw_code, "active": True})["row"]
+        auto_created = bool(aff)
     if not aff:
         return {"credited": False, "duplicate": False, "reason": "no_attribution"}
     if email and (aff["email"] or "").lower() == email:
@@ -285,4 +302,187 @@ def record_external_sale(conn, *, provider: str, transaction_id: str, email: str
     )
     conn.commit()
     return {"credited": True, "duplicate": False, "affiliate_id": aff["id"], "via": "discord_invite_code",
-            "sale_id": cur.lastrowid, "rate": rate, "commission": round(amount_cents * rate / 10000, 2)}
+            "sale_id": cur.lastrowid, "rate": rate, "commission": round(amount_cents * rate / 10000, 2),
+            "affiliate_created": auto_created}
+
+
+# ------------------------------------------------------- hub roster sync
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def unique_slug(conn, name: str) -> str:
+    base = slugify(name) or secrets.token_hex(4)
+    slug, n = base, 2
+    while conn.execute("SELECT id FROM affiliates WHERE slug = ?", [slug]).fetchone():
+        slug, n = f"{base}-{n}", n + 1
+    return slug
+
+
+def _clean_hub_entry(entry: dict) -> dict | None:
+    discord_id = str(entry.get("discord_user_id") or "").strip()[:40]
+    if not discord_id.isdigit():
+        return None
+    email = (entry.get("email") or "").strip().lower()[:254]
+    if email and not EMAIL_RE.match(email):
+        email = ""
+    code = (entry.get("invite_code") or "").strip().rsplit("/", 1)[-1][:60]
+    return {
+        "discord_user_id": discord_id,
+        "name": (entry.get("name") or "").strip()[:80] or f"Discord affiliate {discord_id[-4:]}",
+        "invite_code": code,
+        "email": email,
+        "active": bool(entry.get("active", True)),
+    }
+
+
+def sync_hub_affiliate(conn, entry: dict) -> dict:
+    """Reconcile one Discord-hub affiliate with the app roster. Match order:
+    Discord id (already synced) -> invite code (claimed by hand) -> email
+    (affiliate already has an app login) -> exact name (hand-seeded roster)
+    -> create. Never overwrites a
+    hand-entered name/email on a record that existed before the hub knew it.
+    Returns {"action": created|linked_code|linked_email|updated|unchanged|
+    deactivated|skipped, "row": affiliate_row | None}."""
+    e = _clean_hub_entry(entry)
+    if not e:
+        return {"action": "skipped", "reason": "bad_discord_id", "row": None}
+    now = _now()
+    row = conn.execute("SELECT * FROM affiliates WHERE discord_user_id = ?", [e["discord_user_id"]]).fetchone()
+    action = "unchanged"
+    if row is None and e["invite_code"]:
+        row = conn.execute(
+            "SELECT * FROM affiliates WHERE LOWER(discord_invite_code) = ? AND discord_user_id IS NULL",
+            [e["invite_code"].lower()],
+        ).fetchone()
+        if row is not None:
+            action = "linked_code"
+    if row is None and e["email"]:
+        row = conn.execute(
+            "SELECT * FROM affiliates WHERE email = ? AND discord_user_id IS NULL", [e["email"]]
+        ).fetchone()
+        if row is not None:
+            action = "linked_email"
+    if row is None and e["active"]:
+        # Same name as an app affiliate nobody on Discord has claimed yet
+        # (the roster Justin seeded by hand). Exact, case-insensitive.
+        candidates = conn.execute(
+            "SELECT * FROM affiliates WHERE discord_user_id IS NULL AND active = 1 AND merged_into IS NULL "
+            "AND (LOWER(name) = ? OR slug = ?)",
+            [e["name"].lower(), slugify(e["name"])],
+        ).fetchall()
+        if len(candidates) == 1:
+            row = candidates[0]
+            action = "linked_name"
+
+    if row is None:
+        if not e["active"]:
+            return {"action": "skipped", "reason": "inactive_unknown", "row": None}
+        email = e["email"] or None
+        if email and conn.execute("SELECT id FROM affiliates WHERE email = ?", [email]).fetchone():
+            email = None  # belongs to someone already linked to a different Discord account
+        code = e["invite_code"] or None
+        if code and conn.execute("SELECT id FROM affiliates WHERE LOWER(discord_invite_code) = ?", [code.lower()]).fetchone():
+            code = None
+        cur = conn.execute(
+            "INSERT INTO affiliates (slug, name, handle, email, password_hash, default_rate, product_rates, "
+            "discord_user_id, discord_invite_code, source, hub_synced_at) "
+            "VALUES (?, ?, '', ?, NULL, ?, '{}', ?, ?, 'discord-hub', ?)",
+            [unique_slug(conn, e["name"]), e["name"], email, affiliate_tracking.PROGRAM_RATE,
+             e["discord_user_id"], code, now],
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM affiliates WHERE id = ?", [cur.lastrowid]).fetchone()
+        return {"action": "created", "row": row}
+
+    # Existing record: attach the Discord id, refresh the invite code, fill blanks.
+    if row["merged_into"]:
+        target = conn.execute("SELECT * FROM affiliates WHERE id = ?", [row["merged_into"]]).fetchone()
+        if target is not None:
+            row = target
+    updates: dict = {"discord_user_id": e["discord_user_id"], "hub_synced_at": now}
+    if e["invite_code"] and (row["discord_invite_code"] or "").lower() != e["invite_code"].lower():
+        clash = conn.execute(
+            "SELECT id FROM affiliates WHERE LOWER(discord_invite_code) = ? AND id != ?",
+            [e["invite_code"].lower(), row["id"]],
+        ).fetchone()
+        if not clash:
+            updates["discord_invite_code"] = e["invite_code"]
+            action = "updated" if action == "unchanged" else action
+    if e["email"] and not row["email"]:
+        if not conn.execute("SELECT id FROM affiliates WHERE email = ? AND id != ?", [e["email"], row["id"]]).fetchone():
+            updates["email"] = e["email"]
+            action = "updated" if action == "unchanged" else action
+    if (row["source"] or "") == "discord-hub" and e["name"] and row["name"] != e["name"] and not row["password_hash"]:
+        updates["name"] = e["name"]  # hub-owned record: follow the Discord display name until they log in
+        action = "updated" if action == "unchanged" else action
+    if not e["active"] and (row["source"] or "") == "discord-hub" and not row["password_hash"] and row["active"]:
+        updates["active"] = 0
+        action = "deactivated"
+    elif e["active"] and not row["active"] and (row["source"] or "") == "discord-hub" and not row["merged_into"]:
+        updates["active"] = 1
+        action = "updated" if action == "unchanged" else action
+    sets = ", ".join(f"{k} = ?" for k in updates)
+    conn.execute(f"UPDATE affiliates SET {sets} WHERE id = ?", [*updates.values(), row["id"]])
+    conn.commit()
+    return {"action": action, "row": conn.execute("SELECT * FROM affiliates WHERE id = ?", [row["id"]]).fetchone()}
+
+
+def sync_hub_roster(conn, roster: list[dict]) -> dict:
+    """Apply a full roster push from the hub. Returns per-action counts plus
+    the resulting (discord_user_id -> app affiliate) map for the hub's logs."""
+    counts: dict[str, int] = {}
+    mapping = []
+    for entry in roster or []:
+        res = sync_hub_affiliate(conn, entry)
+        counts[res["action"]] = counts.get(res["action"], 0) + 1
+        if res["row"] is not None:
+            mapping.append({"discord_user_id": res["row"]["discord_user_id"], "affiliate_id": res["row"]["id"],
+                            "slug": res["row"]["slug"], "action": res["action"]})
+    return {"ok": True, "received": len(roster or []), "counts": counts, "affiliates": mapping}
+
+
+# --------------------------------------------------------------- merging
+
+def merge_affiliates(conn, *, source_id: int, target_id: int) -> dict:
+    """Fold a Discord-created affiliate record into the affiliate's real app
+    account: every sale, click, referred client, campaign link and payout
+    moves across, the Discord identity moves across, and the source record is
+    deactivated and pointed at the target so future hub pushes land on the
+    right account. Only hub-created records that never got a login can be
+    merged, so a real account can never be swallowed by mistake."""
+    if source_id == target_id:
+        raise ValueError("Pick a different affiliate to merge into")
+    src = conn.execute("SELECT * FROM affiliates WHERE id = ?", [source_id]).fetchone()
+    dst = conn.execute("SELECT * FROM affiliates WHERE id = ?", [target_id]).fetchone()
+    if not src or not dst:
+        raise ValueError("Affiliate not found")
+    if (src["source"] or "") != "discord-hub" or src["password_hash"]:
+        raise ValueError("Only Discord-created affiliates without a login can be merged")
+    if src["merged_into"]:
+        raise ValueError("That affiliate was already merged")
+    if dst["merged_into"] or not dst["active"]:
+        raise ValueError("Merge target must be an active affiliate")
+    moved = {}
+    for table, col in (("affiliate_sales", "affiliate_id"), ("affiliate_clicks", "affiliate_id"),
+                       ("affiliate_links", "affiliate_id"), ("affiliate_payouts", "affiliate_id"),
+                       ("users", "referred_by_affiliate_id")):
+        cur = conn.execute(f"UPDATE {table} SET {col} = ? WHERE {col} = ?", [target_id, source_id])
+        moved[table] = cur.rowcount
+    code = src["discord_invite_code"]
+    conn.execute(
+        "UPDATE affiliates SET discord_user_id = NULL, discord_invite_code = NULL, active = 0, merged_into = ?, "
+        "email = NULL, slug = ? WHERE id = ?",
+        [target_id, f"{src['slug']}-merged-{source_id}", source_id],
+    )
+    conn.execute(
+        "UPDATE affiliates SET discord_user_id = ?, discord_invite_code = COALESCE(?, discord_invite_code), "
+        "email = COALESCE(email, ?), hub_synced_at = ? WHERE id = ?",
+        [src["discord_user_id"], code, src["email"], _now(), target_id],
+    )
+    conn.commit()
+    return {"merged": source_id, "into": target_id, "moved": moved}
