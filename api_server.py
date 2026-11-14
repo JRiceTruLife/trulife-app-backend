@@ -10,6 +10,7 @@ Runs on port 8000. Provides:
 - Transactional email (password reset codes, purchase receipts) via Resend
 - Profile settings
 """
+import hmac
 import os
 import json
 import re
@@ -33,6 +34,7 @@ from pydantic import BaseModel, Field
 
 import email_service
 import affiliate_tracking
+import affiliate_links
 import room_planner
 
 # TRULIFE_DB_PATH lets production hosting (e.g. a mounted persistent disk)
@@ -92,7 +94,12 @@ AFFILIATE_PRODUCTS = [
     "Fix & Flip Module",
     "5 Step Method Module",
     "Coaching",
+    "Discord Membership",
 ]
+
+# Shared secret the Tru Life Discord hub uses to forward paid membership
+# invoices (POST /api/affiliate/external-sale). Unset = endpoint disabled.
+HUB_SHARED_SECRET = os.environ.get("TRULIFE_HUB_SHARED_SECRET", "").strip()
 
 # Maps a Stripe-sold catalog item (GUIDE_CATALOG id) to the affiliate
 # commission product it counts as. Used by the webhook to auto-credit the
@@ -395,6 +402,7 @@ def init_db():
             db.execute(ddl)
             db.commit()
     affiliate_tracking.migrate(db)
+    affiliate_links.migrate(db)
 
 
 # --- Owner account: seeded/promoted on every startup. ---
@@ -639,6 +647,8 @@ RATE_LIMITS = {
     "comps_lookup": (12, 3600),
     # Room Planner submissions carry photos and send an email each time.
     "room_planner_submit": (6, 3600),
+    # Wrong shared-secret attempts against the hub bridge.
+    "hub_external_sale": (5, 300),
 }
 
 
@@ -726,18 +736,26 @@ def affiliate_public(row) -> dict:
         "name": row["name"],
         "handle": row["handle"],
         "email": row["email"],
-        # Commission is a flat program rate for everyone; legacy per-affiliate
-        # fields are reported as that rate so older clients stay consistent.
-        "default_rate": AFFILIATE_COMMISSION_RATE,
+        # Program rate for everyone unless admin set a per-affiliate override.
+        "default_rate": affiliate_tracking.effective_rate(row),
+        "rate_override": _row_get(row, "rate_override"),
+        "discord_invite_code": _row_get(row, "discord_invite_code") or "",
         "product_rates": {},
         "program_rate": AFFILIATE_COMMISSION_RATE,
         "is_admin": bool(row["is_admin"]),
     }
 
 
+def _row_get(row, key, default=None):
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 def affiliate_rate(row=None, product: str | None = None) -> float:
-    """Flat 20% on every in-app item an affiliate helped sell."""
-    return AFFILIATE_COMMISSION_RATE
+    """Program rate (20%) on every in-app item, or the affiliate's override."""
+    return affiliate_tracking.effective_rate(row)
 
 
 def mask_email(email: str | None) -> str:
@@ -859,6 +877,36 @@ class AffiliateRatesBody(BaseModel):
     product_rates: dict | None = None
 
 
+class AffiliateDiscordBody(BaseModel):
+    invite_code: str = Field(default="", max_length=200)
+
+
+class AffiliateLinkCreateBody(BaseModel):
+    label: str = Field(max_length=80)
+    product: str = Field(default="", max_length=80)
+    note: str = Field(default="", max_length=500)
+    code: str = Field(default="", max_length=60)
+    affiliate_id: int | None = None  # admin only: create on behalf of an affiliate
+
+
+class AffiliateLinkUpdateBody(BaseModel):
+    label: str | None = Field(default=None, max_length=80)
+    note: str | None = Field(default=None, max_length=500)
+    active: bool | None = None
+
+
+class ExternalSaleBody(BaseModel):
+    provider: str = Field(max_length=40)
+    transaction_id: str = Field(max_length=200)
+    email: str = Field(default="", max_length=254)
+    amount_cents: int = Field(ge=0)
+    product: str = Field(default="Discord Membership", max_length=80)
+    description: str = Field(default="", max_length=200)
+    hub_affiliate_code: str = Field(default="", max_length=100)
+    member_label: str = Field(default="", max_length=120)
+    occurred_at: str = Field(default="", max_length=40)
+
+
 class AffiliateCredentialsBody(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=200)
@@ -928,17 +976,18 @@ def signup(body: SignupBody, request: Request):
     # Lifetime affiliate attribution happens exactly once, at signup. The
     # slug comes from the ?ref= link the visitor arrived on; the frontend
     # keeps it for AFFILIATE_ATTRIBUTION_DAYS and sends it here.
-    ref_aff = affiliate_by_slug(body.ref)
+    ref_aff, ref_link = affiliate_links.resolve_ref(db, body.ref)
     if body.ref.strip() and not ref_aff:
         raise HTTPException(400, "Invite code is invalid or inactive. Correct it or clear it to continue without a referral.")
     if ref_aff and (ref_aff["email"] or "").lower() == email:
-        ref_aff = None
+        ref_aff, ref_link = None, None
     try:
         with closing(get_db()) as conn, conn:
             cur = conn.execute(
-                "INSERT INTO users (email,password_hash,name,referred_by_affiliate_id,referred_at) "
-                "VALUES (?,?,?,?,CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END)",
-                [email, pw_hash, body.name.strip(), ref_aff["id"] if ref_aff else None, ref_aff["id"] if ref_aff else None],
+                "INSERT INTO users (email,password_hash,name,referred_by_affiliate_id,referred_link_id,referred_at) "
+                "VALUES (?,?,?,?,?,CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE NULL END)",
+                [email, pw_hash, body.name.strip(), ref_aff["id"] if ref_aff else None,
+                 ref_link["id"] if ref_link else None, ref_aff["id"] if ref_aff else None],
             )
             user_id = cur.lastrowid
     except sqlite3.IntegrityError:
@@ -1811,12 +1860,12 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
 
 @app.post("/api/affiliate/click", status_code=201)
 def log_affiliate_click(body: ClickBody):
-    row = db.execute("SELECT id FROM affiliates WHERE slug = ? AND active = 1", [body.ref.strip().lower()]).fetchone()
+    row, link = affiliate_links.resolve_ref(db, body.ref)
     if not row:
         return {"logged": False}
     db.execute(
-        "INSERT INTO affiliate_clicks (affiliate_id, path, referrer) VALUES (?, ?, ?)",
-        [row["id"], body.path[:500], body.referrer[:500]],
+        "INSERT INTO affiliate_clicks (affiliate_id, path, referrer, link_id) VALUES (?, ?, ?, ?)",
+        [row["id"], body.path[:500], body.referrer[:500], link["id"] if link else None],
     )
     db.commit()
     return {"logged": True}
@@ -1913,6 +1962,111 @@ def tracking_link_for(slug: str) -> str:
     # the link must land on the app origin (not the marketing site).
     base = APP_BASE_URL or "https://app.trulifeproperties.com"
     return f"{base}/?ref={slug}"
+
+
+# ---------- Campaign tracking links ----------
+
+def _link_base() -> str:
+    return APP_BASE_URL or "https://app.trulifeproperties.com"
+
+
+def _links_card(aff) -> dict:
+    rows = db.execute(
+        "SELECT * FROM affiliate_links WHERE affiliate_id = ? ORDER BY active DESC, id DESC", [aff["id"]]
+    ).fetchall()
+    return {
+        "affiliate_id": aff["id"],
+        "name": aff["name"],
+        "slug": aff["slug"],
+        "main_link": tracking_link_for(aff["slug"]),
+        "main_stats": affiliate_links.main_link_stats(db, aff),
+        "links": [{**affiliate_links.link_public(r, _link_base()), "stats": affiliate_links.link_stats(db, aff, r)} for r in rows],
+    }
+
+
+@app.get("/api/affiliate/links")
+def affiliate_links_list(authorization: str | None = Header(default=None)):
+    """Every tracking link with its own clicks / signups / sales. Affiliates
+    see their own; admin sees everyone's."""
+    me = current_affiliate(authorization)
+    if me["is_admin"]:
+        affs = db.execute("SELECT * FROM affiliates WHERE active = 1 ORDER BY name").fetchall()
+    else:
+        affs = [me]
+    return {
+        "is_admin": bool(me["is_admin"]),
+        "products": AFFILIATE_PRODUCTS,
+        "destinations": affiliate_links.PRODUCT_DESTINATIONS,
+        "affiliates": [_links_card(a) for a in affs],
+    }
+
+
+@app.post("/api/affiliate/links", status_code=201)
+def affiliate_links_create(body: AffiliateLinkCreateBody, authorization: str | None = Header(default=None)):
+    me = current_affiliate(authorization)
+    target = me
+    if body.affiliate_id is not None and body.affiliate_id != me["id"]:
+        if not me["is_admin"]:
+            raise HTTPException(403, "Admin access required")
+        target = db.execute("SELECT * FROM affiliates WHERE id = ? AND active = 1", [body.affiliate_id]).fetchone()
+        if not target:
+            raise HTTPException(404, "Affiliate not found")
+    try:
+        row = affiliate_links.create_link(
+            db, affiliate=target, label=body.label, product=body.product, note=body.note,
+            code=body.code or None, allowed_products=AFFILIATE_PRODUCTS,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {**affiliate_links.link_public(row, _link_base()), "stats": affiliate_links.link_stats(db, target, row)}
+
+
+@app.patch("/api/affiliate/links/{link_id}")
+def affiliate_links_update(link_id: int, body: AffiliateLinkUpdateBody, authorization: str | None = Header(default=None)):
+    """Rename, annotate or archive (active=false) a link. Archived links stop
+    resolving for new visitors but keep their history and the clients they
+    already brought in."""
+    me = current_affiliate(authorization)
+    row = db.execute("SELECT * FROM affiliate_links WHERE id = ?", [link_id]).fetchone()
+    if not row or (not me["is_admin"] and row["affiliate_id"] != me["id"]):
+        raise HTTPException(404, "Link not found")
+    if body.label is not None:
+        label = body.label.strip()[:80]
+        if not label:
+            raise HTTPException(400, "Label cannot be empty")
+        db.execute("UPDATE affiliate_links SET label = ? WHERE id = ?", [label, link_id])
+    if body.note is not None:
+        db.execute("UPDATE affiliate_links SET note = ? WHERE id = ?", [body.note.strip()[:500], link_id])
+    if body.active is not None:
+        db.execute("UPDATE affiliate_links SET active = ? WHERE id = ?", [1 if body.active else 0, link_id])
+    db.commit()
+    row = db.execute("SELECT * FROM affiliate_links WHERE id = ?", [link_id]).fetchone()
+    aff = db.execute("SELECT * FROM affiliates WHERE id = ?", [row["affiliate_id"]]).fetchone()
+    return {**affiliate_links.link_public(row, _link_base()), "stats": affiliate_links.link_stats(db, aff, row)}
+
+
+@app.post("/api/affiliate/external-sale")
+def affiliate_external_sale(body: ExternalSaleBody, request: Request, x_trulife_hub_key: str | None = Header(default=None)):
+    """Server-to-server: the Tru Life Discord hub forwards each paid Stripe
+    membership invoice. Authenticated by a shared secret, never callable
+    from a browser session. Idempotent per provider + transaction id."""
+    if not HUB_SHARED_SECRET:
+        raise HTTPException(503, "External sales are not configured")
+    if not x_trulife_hub_key or not hmac.compare_digest(x_trulife_hub_key, HUB_SHARED_SECRET):
+        enforce_rate_limit("hub_external_sale", request)
+        raise HTTPException(401, "Invalid hub key")
+    if body.provider.strip().lower() not in ("discord-hub",):
+        raise HTTPException(400, "Unknown provider")
+    try:
+        result = affiliate_links.record_external_sale(
+            db, provider=body.provider, transaction_id=body.transaction_id, email=body.email,
+            amount_cents=body.amount_cents, product=body.product or "Discord Membership",
+            description=body.description, hub_affiliate_code=body.hub_affiliate_code,
+            member_label=body.member_label, occurred_at=body.occurred_at or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return result
 
 
 @app.get("/api/affiliate/sales")
@@ -2040,10 +2194,39 @@ def affiliate_admin_update_rates(affiliate_id: int, body: AffiliateRatesBody, au
     row = db.execute("SELECT * FROM affiliates WHERE id = ?", [affiliate_id]).fetchone()
     if not row:
         raise HTTPException(404, "Affiliate not found")
-    raise HTTPException(
-        409,
-        f"Commission is a flat {AFFILIATE_COMMISSION_RATE:g}% program rate on every in-app sale and is not set per affiliate.",
-    )
+    # default_rate == None (or equal to the program rate) clears the override
+    # so the affiliate follows the program rate again. Only future sales are
+    # affected: every sale keeps the rate_snapshot it was recorded with.
+    override = body.default_rate
+    if override is not None and abs(override - AFFILIATE_COMMISSION_RATE) < 1e-9:
+        override = None
+    db.execute("UPDATE affiliates SET rate_override = ? WHERE id = ?", [override, affiliate_id])
+    db.commit()
+    return affiliate_public(db.execute("SELECT * FROM affiliates WHERE id = ?", [affiliate_id]).fetchone())
+
+
+@app.put("/api/affiliate/list/{affiliate_id}/discord")
+def affiliate_admin_set_discord(affiliate_id: int, body: AffiliateDiscordBody, authorization: str | None = Header(default=None)):
+    """Admin: claim a Discord invite code for an affiliate so hub membership
+    invoices from members who joined through that invite pay this affiliate
+    even when the member never created an app account."""
+    me = current_affiliate(authorization)
+    if not me["is_admin"]:
+        raise HTTPException(403, "Admin access required")
+    row = db.execute("SELECT * FROM affiliates WHERE id = ?", [affiliate_id]).fetchone()
+    if not row:
+        raise HTTPException(404, "Affiliate not found")
+    code = (body.invite_code or "").strip()
+    code = code.rsplit("/", 1)[-1][:60]  # accept a full discord.gg/XXXX URL too
+    if code:
+        clash = db.execute(
+            "SELECT id FROM affiliates WHERE LOWER(discord_invite_code) = ? AND id != ?", [code.lower(), affiliate_id]
+        ).fetchone()
+        if clash:
+            raise HTTPException(409, "That Discord invite code is already claimed by another affiliate")
+    db.execute("UPDATE affiliates SET discord_invite_code = ? WHERE id = ?", [code or None, affiliate_id])
+    db.commit()
+    return affiliate_public(db.execute("SELECT * FROM affiliates WHERE id = ?", [affiliate_id]).fetchone())
 
 
 @app.put("/api/affiliate/list/{affiliate_id}/credentials")
@@ -2107,8 +2290,11 @@ def _client_row(u, is_admin: bool) -> dict:
         g = next((x for x in GUIDE_CATALOG if x["id"] == p["guide_id"]), None)
         names.append(g["name"] if g else p["guide_id"])
     aff = db.execute("SELECT name, slug FROM affiliates WHERE id = ?", [u["referred_by_affiliate_id"]]).fetchone() if u["referred_by_affiliate_id"] else None
+    link_id = _row_get(u, "referred_link_id")
+    link = db.execute("SELECT label, code FROM affiliate_links WHERE id = ?", [link_id]).fetchone() if link_id else None
     return {
         "user_id": u["id"],
+        "via_link": (link["label"] or link["code"]) if link else "",
         "name": u["name"] if is_admin else (u["name"].split(" ")[0] if u["name"] else ""),
         "email": u["email"] if is_admin else mask_email(u["email"]),
         "joined": u["created_at"],

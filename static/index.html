@@ -2447,12 +2447,25 @@ body {
 .aff-table td { padding: 12px 14px; border-bottom: 1px solid #eef0f4; color: #333750; }
 .aff-table tr:last-child td { border-bottom: none; }
 .aff-table td.num { font-variant-numeric: tabular-nums; }
-.aff-links-list { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
+.aff-links-list { display: flex; flex-direction: column; gap: 14px; max-width: 860px; }
+.aff-link-group { background: #fff; border: 1px solid #e5e7ef; border-radius: 12px; padding: 16px; }
+.aff-link-group h3 { margin: 0 0 10px; font-size: 0.95rem; color: var(--navy); }
+.aff-link-card { border: 1px solid #eef0f4; border-radius: 10px; padding: 12px 14px; margin-top: 10px; background: #fafbfd; }
+.aff-link-card.is-main { background: #fff; border-color: #e5e7ef; }
+.aff-link-card.is-archived { opacity: .6; }
+.aff-link-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.aff-link-head > div:first-child { flex: 1 1 auto; min-width: 0; }
+.aff-link-title { font-weight: 700; color: var(--navy); font-size: 0.88rem; }
+.aff-link-meta { font-size: 0.76rem; color: #7a7e90; margin-top: 2px; }
+.aff-link-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+.aff-link-stats { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; font-size: 0.78rem; color: #5a5e70; }
+.aff-link-stats b { color: var(--navy); font-variant-numeric: tabular-nums; }
+.aff-rate-input { width: 64px; padding: 4px 6px; border: 1px solid #d7d9e3; border-radius: 6px; font-size: 0.82rem; }
 .aff-link-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   background: #fff; border: 1px solid #e5e7ef; border-radius: 10px; padding: 14px 16px;
 }
-.aff-link-row .aff-link-url { font-size: 0.82rem; color: var(--navy); word-break: break-all; font-family: monospace; }
+.aff-link-row .aff-link-url, .aff-link-card .aff-link-url { font-size: 0.82rem; color: var(--navy); word-break: break-all; font-family: monospace; margin-top: 6px; }
 .aff-copy-btn {
   flex-shrink: 0; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--navy);
   background: #fff; color: var(--navy); font-weight: 700; font-size: 0.78rem; cursor: pointer; font-family: var(--sans);
@@ -2636,8 +2649,22 @@ body {
       </section>
 
       <section class="aff-panel" id="aff-panel-links">
-        <h2 class="aff-h2">Tracking Links</h2>
-        <p class="aff-sub">Share your unique link so sales and visits are credited to you automatically.</p>
+        <div class="aff-panel-head">
+          <div>
+            <h2 class="aff-h2">Tracking Links</h2>
+            <p class="aff-sub" style="margin-bottom:0;">Your main link works for everything. Add a campaign link for each video or product you promote &mdash; every link ties back to you, and each one reports its own clicks, signups and sales. Clients stay attached to you for life, so whatever they buy later still pays out.</p>
+          </div>
+          <button type="button" class="aff-btn-sm" id="aff-add-link-btn">+ New Link</button>
+        </div>
+        <div id="aff-add-link-form" class="aff-form aff-inline-form" style="display:none;">
+          <div class="aff-field" id="aff-link-owner-field" style="display:none;"><label>For affiliate</label><select id="aff-link-owner"></select></div>
+          <div class="aff-field"><label>Label (what is this link for?)</label><input type="text" id="aff-link-label" maxlength="80" placeholder="e.g. Fix &amp; Flip reel #2" /></div>
+          <div class="aff-field"><label>Promotes</label><select id="aff-link-product"></select></div>
+          <div class="aff-field"><label>Custom code (optional)</label><input type="text" id="aff-link-code" maxlength="60" placeholder="auto from label" /></div>
+          <div class="aff-field aff-field-wide"><label>Note (video URL, post, where it's shared)</label><input type="text" id="aff-link-note" maxlength="500" placeholder="https://..." /></div>
+          <div id="aff-link-error" class="aff-error"></div>
+          <button type="button" class="aff-submit" id="aff-link-submit">Create Link</button>
+        </div>
         <div id="aff-links-list" class="aff-links-list"></div>
       </section>
 
@@ -2659,7 +2686,7 @@ body {
         <div class="aff-stat-grid" id="aff-clients-stats"></div>
         <div class="aff-table-wrap">
           <table class="aff-table" id="aff-clients-table">
-            <thead><tr><th>Client</th><th>Email</th><th>Joined</th><th class="aff-admin-col">Affiliate</th><th>Purchases</th><th>Total Spent</th><th>Products</th><th>Last Purchase</th></tr></thead>
+            <thead><tr><th>Client</th><th>Email</th><th>Joined</th><th class="aff-admin-col">Affiliate</th><th>Came In Via</th><th>Purchases</th><th>Total Spent</th><th>Products</th><th>Last Purchase</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -8607,14 +8634,45 @@ async function loadAffAffiliatesList() {
         '<td>' + escapeHtml(a.name) + '</td>' +
         '<td>' + escapeHtml(a.handle || '') + '</td>' +
         '<td>' + escapeHtml(a.email) + '</td>' +
-        '<td><strong>' + (a.program_rate != null ? a.program_rate : 20) + '%</strong> <span class="text-muted" style="font-size:0.78rem;">flat, all products</span></td>' +
-        '<td><span class="aff-badge aff-badge-active">Active</span></td>' +
+        '<td style="white-space:nowrap;"><input type="number" class="aff-rate-input aff-rate-field" min="0" max="100" step="0.5" value="' + (a.default_rate != null ? a.default_rate : 20) + '" data-id="' + a.id + '" aria-label="Commission percent" />% ' +
+          '<span class="text-muted" style="font-size:0.74rem;">' + (a.rate_override != null ? 'custom' : 'program ' + (a.program_rate != null ? a.program_rate : 20) + '%') + '</span></td>' +
+        '<td><span class="aff-badge aff-badge-active">Active</span>' + (a.discord_invite_code ? '<div class="text-muted" style="font-size:0.72rem;margin-top:4px;">Discord: ' + escapeHtml(a.discord_invite_code) + '</div>' : '') + '</td>' +
         '<td style="white-space:nowrap;">' +
-          '<button type="button" class="aff-copy-btn aff-set-login-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-email="' + escapeHtml(a.email || '') + '">' + (a.email ? 'Reset Login' : 'Set Login') + '</button>' +
+          '<button type="button" class="aff-copy-btn aff-set-login-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-email="' + escapeHtml(a.email || '') + '">' + (a.email ? 'Reset Login' : 'Set Login') + '</button> ' +
+          '<button type="button" class="aff-copy-btn aff-set-discord-btn" data-id="' + a.id + '" data-name="' + escapeHtml(a.name) + '" data-code="' + escapeHtml(a.discord_invite_code || '') + '">Discord Invite</button>' +
         '</td>' +
       '</tr>'
     )).join('') || '<tr><td colspan="6">No affiliates yet.</td></tr>';
 
+    tbody.querySelectorAll('.aff-rate-field').forEach(input => {
+      input.addEventListener('change', async () => {
+        const id = input.getAttribute('data-id');
+        const value = parseFloat(input.value);
+        if (Number.isNaN(value) || value < 0 || value > 100) { alert('Enter a percentage between 0 and 100.'); return; }
+        input.disabled = true;
+        try {
+          const res = await affiliateFetch('/api/affiliate/list/' + id + '/rates', { method: 'PUT', body: JSON.stringify({ default_rate: value }) });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Failed to save rate');
+          loadAffAffiliatesList();
+        } catch (err) { alert(err.message); input.disabled = false; }
+      });
+    });
+    tbody.querySelectorAll('.aff-set-discord-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        const name = btn.getAttribute('data-name');
+        const code = window.prompt('Discord invite code (or discord.gg link) that ' + name + ' shares for the community. Members who join through it and pay for membership credit ' + name + ' every month. Leave empty to clear.', btn.getAttribute('data-code') || '');
+        if (code === null) return;
+        btn.disabled = true; btn.textContent = 'Saving\u2026';
+        try {
+          const res = await affiliateFetch('/api/affiliate/list/' + id + '/discord', { method: 'PUT', body: JSON.stringify({ invite_code: code.trim() }) });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Failed to save invite code');
+          loadAffAffiliatesList();
+        } catch (err) { alert(err.message); btn.disabled = false; btn.textContent = 'Discord Invite'; }
+      });
+    });
     tbody.querySelectorAll('.aff-set-login-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-id');
@@ -8680,22 +8738,62 @@ document.getElementById('aff-new-submit').addEventListener('click', async () => 
   }
 });
 
+let _affLinksData = null;
+function affLinkStats(st) {
+  st = st || {};
+  return '<div class="aff-link-stats">' +
+    '<span><b>' + (st.clicks || 0) + '</b> clicks</span>' +
+    '<span><b>' + (st.signups || 0) + '</b> signups</span>' +
+    '<span><b>' + (st.sale_count || 0) + '</b> sales</span>' +
+    '<span><b>' + affMoney(st.revenue || 0) + '</b> sold</span>' +
+    '<span><b>' + affMoney(st.commission || 0) + '</b> earned</span>' +
+  '</div>';
+}
+function affLinkCard(l) {
+  return '<div class="aff-link-card' + (l.active ? '' : ' is-archived') + '" data-link-id="' + l.id + '">' +
+    '<div class="aff-link-head"><div>' +
+      '<div class="aff-link-title">' + escapeHtml(l.label) + (l.active ? '' : ' <span class="aff-badge aff-badge-inactive">Archived</span>') + '</div>' +
+      '<div class="aff-link-meta">' + escapeHtml(l.product || 'Whole app') + (l.note ? ' \u00b7 ' + escapeHtml(l.note) : '') + ' \u00b7 code <strong>' + escapeHtml(l.code) + '</strong></div>' +
+      '<div class="aff-link-url">' + escapeHtml(l.url) + '</div>' +
+    '</div><div class="aff-link-actions">' +
+      '<button type="button" class="aff-copy-btn" data-link="' + escapeHtml(l.url) + '">Copy</button>' +
+      '<button type="button" class="aff-copy-btn aff-link-toggle" data-id="' + l.id + '" data-active="' + (l.active ? '1' : '0') + '">' + (l.active ? 'Archive' : 'Restore') + '</button>' +
+    '</div></div>' + affLinkStats(l.stats) +
+  '</div>';
+}
 async function loadAffLinks() {
   try {
-    const res = await affiliateFetch('/api/affiliate/overview');
+    const res = await affiliateFetch('/api/affiliate/links');
     const data = await res.json();
-    const list = data.is_admin ? (data.affiliates || []) : (data.affiliates || []).slice(0, 1);
+    _affLinksData = data;
     const wrap = document.getElementById('aff-links-list');
-    wrap.innerHTML = list.map(a => (
-      '<div class="aff-link-row">' +
-        '<div><div style="font-weight:700;color:var(--navy);font-size:0.85rem;margin-bottom:2px;">' + escapeHtml(a.name) + '</div>' +
-        '<div class="aff-link-url">' + escapeHtml(a.tracking_link) + '</div>' +
-        '<div style="font-size:12px;margin-top:8px;">Invite code: <strong>' + escapeHtml(a.slug) + '</strong>. Use this code at signup if switching devices or installing the app.</div></div>' +
-        '<button type="button" class="aff-copy-btn" data-link="' + escapeHtml(a.tracking_link) + '">Copy</button>' +
+    wrap.innerHTML = (data.affiliates || []).map(a => (
+      '<div class="aff-link-group">' +
+        '<h3>' + escapeHtml(a.name) + '</h3>' +
+        '<div class="aff-link-card is-main">' +
+          '<div class="aff-link-head"><div>' +
+            '<div class="aff-link-title">Main link</div>' +
+            '<div class="aff-link-meta">Invite code <strong>' + escapeHtml(a.slug) + '</strong> \u2014 works at signup if someone installs the app or switches devices. Any campaign code below works there too.</div>' +
+            '<div class="aff-link-url">' + escapeHtml(a.main_link) + '</div>' +
+          '</div><div class="aff-link-actions"><button type="button" class="aff-copy-btn" data-link="' + escapeHtml(a.main_link) + '">Copy</button></div></div>' +
+          affLinkStats(a.main_stats) +
+        '</div>' +
+        ((a.links || []).map(affLinkCard).join('') || '<p class="aff-sub" style="margin:10px 0 0;">No campaign links yet. Use <strong>+ New Link</strong> to make one per video or product.</p>') +
       '</div>'
     )).join('') || '<p class="aff-sub">No tracking links yet.</p>';
 
-    wrap.querySelectorAll('.aff-copy-btn').forEach(btn => {
+    const products = data.products || [];
+    const prodSel = document.getElementById('aff-link-product');
+    prodSel.innerHTML = '<option value="">Whole app (home)</option>' + products.filter(p => p !== 'Discord Membership').map(p => '<option value="' + escapeHtml(p) + '">' + escapeHtml(p) + '</option>').join('');
+    const ownerField = document.getElementById('aff-link-owner-field');
+    if (data.is_admin && (data.affiliates || []).length > 1) {
+      ownerField.style.display = '';
+      document.getElementById('aff-link-owner').innerHTML = data.affiliates.map(a => '<option value="' + a.affiliate_id + '">' + escapeHtml(a.name) + '</option>').join('');
+    } else {
+      ownerField.style.display = 'none';
+    }
+
+    wrap.querySelectorAll('.aff-copy-btn[data-link]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const link = btn.getAttribute('data-link');
         try {
@@ -8704,14 +8802,63 @@ async function loadAffLinks() {
           btn.textContent = 'Copied!';
           setTimeout(() => { btn.textContent = orig; }, 1200);
         } catch (_) {
-          alert('Copy this link: ' + link);
+          window.prompt('Copy your link:', link);
         }
+      });
+    });
+    wrap.querySelectorAll('.aff-link-toggle').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-id');
+        const makeActive = btn.getAttribute('data-active') !== '1';
+        if (!makeActive && !window.confirm('Archive this link? It stops working for new visitors, but every client it already brought in stays attached to you.')) return;
+        btn.disabled = true;
+        try {
+          const r = await affiliateFetch('/api/affiliate/links/' + id, { method: 'PATCH', body: JSON.stringify({ active: makeActive }) });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.detail || 'Could not update link');
+          loadAffLinks();
+        } catch (err) { alert(err.message); btn.disabled = false; }
       });
     });
   } catch (err) {
     if (err.message !== 'Affiliate session expired') console.error(err);
   }
 }
+
+document.getElementById('aff-add-link-btn').addEventListener('click', () => {
+  const form = document.getElementById('aff-add-link-form');
+  form.style.display = form.style.display === 'none' ? 'grid' : 'none';
+  if (form.style.display === 'grid') document.getElementById('aff-link-label').focus();
+});
+
+document.getElementById('aff-link-submit').addEventListener('click', async () => {
+  const errEl = document.getElementById('aff-link-error');
+  errEl.classList.remove('show');
+  const body = {
+    label: document.getElementById('aff-link-label').value.trim(),
+    product: document.getElementById('aff-link-product').value,
+    code: document.getElementById('aff-link-code').value.trim(),
+    note: document.getElementById('aff-link-note').value.trim(),
+  };
+  const ownerField = document.getElementById('aff-link-owner-field');
+  if (ownerField.style.display !== 'none') body.affiliate_id = parseInt(document.getElementById('aff-link-owner').value, 10);
+  if (!body.label) { errEl.textContent = 'Give the link a label so you know which video or post it belongs to.'; errEl.classList.add('show'); return; }
+  const btn = document.getElementById('aff-link-submit');
+  btn.disabled = true; btn.textContent = 'Creating\u2026';
+  try {
+    const res = await affiliateFetch('/api/affiliate/links', { method: 'POST', body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Could not create link');
+    document.getElementById('aff-add-link-form').style.display = 'none';
+    ['aff-link-label', 'aff-link-code', 'aff-link-note'].forEach(id => { document.getElementById(id).value = ''; });
+    loadAffLinks();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create Link';
+  }
+});
 
 async function loadAffSales() {
   try {
@@ -8781,12 +8928,13 @@ async function loadAffClients() {
         '<td>' + escapeHtml(c.email || '') + '</td>' +
         '<td>' + affDate(c.joined) + '</td>' +
         (isAdmin ? '<td>' + escapeHtml(c.affiliate_name || '') + '</td>' : '') +
+        '<td>' + escapeHtml(c.via_link || 'Main link / invite code') + '</td>' +
         '<td class="num">' + (c.purchase_count || 0) + '</td>' +
         '<td class="num">' + affMoney(c.total_spent) + '</td>' +
         '<td>' + escapeHtml((c.products || []).join(', ') || '\u2014') + '</td>' +
         '<td>' + affDate(c.last_purchase) + '</td>' +
       '</tr>'
-    )).join('') || '<tr><td colspan="' + (isAdmin ? 8 : 7) + '">No clients attached yet. Share your tracking link \u2014 anyone who creates an account through it shows up here.</td></tr>';
+    )).join('') || '<tr><td colspan="' + (isAdmin ? 9 : 8) + '">No clients attached yet. Share your tracking link \u2014 anyone who creates an account through it shows up here.</td></tr>';
     if (isAdmin) {
       const sel = document.getElementById('aff-assign-affiliate');
       if (sel && !sel.options.length) {
@@ -8905,9 +9053,11 @@ function onceAuthed(fn) {
 bootstrapAuth();
 
 // Direct link: /?open=room-planner opens the Room Planner (after sign-in if
-// needed). Only allow-listed screens; the param is removed from the URL.
+// needed). Affiliate campaign links also use this (?ref=<code>&open=brick)
+// so a visitor lands on the product the video was about. Only allow-listed
+// screens; the param is removed from the URL.
 (function openFromLink() {
-  const DEEP_LINK_SCREENS = new Set(['room-planner']);
+  const DEEP_LINK_SCREENS = new Set(['room-planner', 'brick', 'five-step', 'design', 'architecture', 'consult']);
   const params = new URLSearchParams(window.location.search);
   const target = params.get('open');
   if (!target || !DEEP_LINK_SCREENS.has(target)) return;

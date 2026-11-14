@@ -10,12 +10,25 @@ import os
 
 # Program rule (Justin, Nov 2 2026): every affiliate earns a flat 20% of each
 # in-app item they helped sell — 5 Step Method, Design Guides, Brick by Brick
-# modules, anything sold through the app. Per-affiliate / per-product rates
-# are no longer used; each sale still stores a rate_snapshot so historical
-# rows keep the rate that applied when they were recorded.
+# modules, anything sold through the app. Each sale stores a rate_snapshot so
+# historical rows keep the rate that applied when they were recorded.
+# Nov 14 2026: admin may give an individual affiliate a different percentage
+# (affiliates.rate_override); when unset the program rate applies.
 PROGRAM_RATE = float(os.environ.get("TRULIFE_AFFILIATE_RATE", "20"))
 if not 0 <= PROGRAM_RATE <= 100:
     raise RuntimeError("TRULIFE_AFFILIATE_RATE must be between 0 and 100")
+
+
+def effective_rate(affiliate=None) -> float:
+    """Per-affiliate override when admin has set one, else the program rate."""
+    if affiliate is not None:
+        try:
+            override = affiliate["rate_override"]
+        except (IndexError, KeyError):
+            override = None
+        if override is not None:
+            return float(override)
+    return float(PROGRAM_RATE)
 
 
 def migrate(conn):
@@ -101,7 +114,7 @@ def record_verified_purchase(conn, *, provider, transaction_id, user_id,
         conn.execute("UPDATE purchase_ledger SET refunded_cents=? WHERE id=?", (refunded_cents, purchase_id))
     if not aff or amount_cents == 0:
         return {"purchase_id": purchase_id, "affiliate_id": None}
-    rate = float(PROGRAM_RATE)
+    rate = effective_rate(aff)
     # Retain compatibility with historical Stripe rows when backfilling a receipt.
     prior = conn.execute(
         "SELECT id FROM affiliate_sales WHERE stripe_session_id=? ORDER BY id LIMIT 1",
@@ -153,4 +166,4 @@ def net_sale(row):
 def sale_rate(row, affiliate=None):
     if row["rate_snapshot"] is not None:
         return row["rate_snapshot"]
-    return PROGRAM_RATE
+    return effective_rate(affiliate)
